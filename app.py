@@ -233,7 +233,7 @@ if st.session_state.role == "user":
                 save_bill(emp, cust, billing_type, details, total)
                 st.session_state.bill_saved = True
                 st.session_state.bill_total = total
-                st.experimental_rerun()
+         
 
 # --------- ADMIN PANEL -----------
 elif st.session_state.role == "admin":
