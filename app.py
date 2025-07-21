@@ -157,28 +157,38 @@ with st.sidebar:
 
 # --------- USER PANEL -----------
 # --------- USER PANEL -----------
+# --------- USER PANEL -----------
 if st.session_state.role == "user":
     st.title("🧾 ExoticBill - Add New Bill")
 
-    # 1) Show success message if we just saved
+    # Success banner
     if st.session_state.get("bill_saved", False):
         st.success(f"Bill saved! Total: ${st.session_state.bill_total:.2f}")
         st.session_state.bill_saved = False
 
-    # 2) Define pricing
+    # Pricing constants
     ITEM_PRICES = {
         "Repair Kit": 400, "Car Wax": 2000, "NOS": 1500,
         "Adv Lockpick": 400, "Lockpick": 250, "Wash Kit": 300
     }
     PART_COST, LABOR = 125, 450
 
-    # 3) Select billing type OUTSIDE the form
+    # 1) Billing‑type selector outside the form
     billing_type = st.selectbox(
         "Select Billing Type",
-        ["ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"],
+        ["ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"]
     )
 
-    # 4) Now build a form that clears on submit, but reads that outer choice
+    # 2) If it's REPAIR, choose repair type outside the form too
+    if billing_type == "REPAIR":
+        repair_type = st.radio(
+            "Repair Type",
+            ["Normal Repair", "Advanced Repair"]
+        )
+    else:
+        repair_type = None
+
+    # 3) Now the form itself (clears on submit)
     with st.form("bill_form", clear_on_submit=True):
         emp = st.text_input("Your CID (Employee)")
         cust = st.text_input("Customer CID")
@@ -188,7 +198,7 @@ if st.session_state.role == "user":
         if billing_type == "ITEMS":
             sel = {}
             for item, price in ITEM_PRICES.items():
-                qty = st.number_input(f"{item} (${price}) – Qty", min_value=0, step=1)
+                qty = st.number_input(f"{item} (${price}) – Qty", min_value=0, step=1, key=item)
                 if qty:
                     sel[item] = qty
                     total += price * qty
@@ -200,8 +210,8 @@ if st.session_state.role == "user":
             details = f"Upgrade: ${amt}"
 
         elif billing_type == "REPAIR":
-            rtype = st.radio("Repair Type", ["Normal Repair", "Advanced Repair"])
-            if rtype == "Normal Repair":
+            # use the repair_type chosen above
+            if repair_type == "Normal Repair":
                 base = st.number_input("Base repair charge ($)", min_value=0.0)
                 total = base + LABOR
                 details = f"Normal Repair: ${base} + ${LABOR} labor"
@@ -223,7 +233,7 @@ if st.session_state.role == "user":
                 save_bill(emp, cust, billing_type, details, total)
                 st.session_state.bill_saved = True
                 st.session_state.bill_total = total
-
+                st.experimental_rerun()
 
 # --------- ADMIN PANEL -----------
 elif st.session_state.role == "admin":
