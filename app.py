@@ -2,12 +2,19 @@ import streamlit as st
 import sqlite3
 from datetime import datetime
 
+# --------------------- STREAMLIT CONFIG ---------------------
+st.set_page_config("ExoticBill", page_icon="🧾")
+
+# --------------------- SESSION STATE INIT ---------------------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.role = None
+    st.session_state.username = ""
+
 # --------------------- DATABASE INIT ---------------------
 def init_db():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
-
-    # Bills Table
     c.execute("""
     CREATE TABLE IF NOT EXISTS bills (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,19 +26,18 @@ def init_db():
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
-
-    # Employees Table
     c.execute("""
     CREATE TABLE IF NOT EXISTS employees (
         cid TEXT PRIMARY KEY,
         name TEXT
     )
     """)
-
     conn.commit()
     conn.close()
 
-# --------------------- SAVE BILL ---------------------
+init_db()
+
+# --------------------- DATABASE HELPERS ---------------------
 def save_bill(employee_cid, customer_cid, billing_type, details, total_amount):
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
@@ -42,7 +48,6 @@ def save_bill(employee_cid, customer_cid, billing_type, details, total_amount):
     conn.commit()
     conn.close()
 
-# --------------------- ADD EMPLOYEE ---------------------
 def add_employee(cid, name):
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
@@ -53,7 +58,6 @@ def add_employee(cid, name):
         st.warning("Employee CID already exists.")
     conn.close()
 
-# --------------------- GET EMPLOYEE NAME ---------------------
 def get_employee_name(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
@@ -62,7 +66,6 @@ def get_employee_name(cid):
     conn.close()
     return result[0] if result else None
 
-# --------------------- GET UNIQUE CIDS ---------------------
 def get_all_employee_cids():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
@@ -71,7 +74,6 @@ def get_all_employee_cids():
     conn.close()
     return data
 
-# --------------------- ANALYTICS ---------------------
 def get_billing_summary_by_cid(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
@@ -85,42 +87,54 @@ def get_billing_summary_by_cid(cid):
     conn.close()
     return summary, total
 
-# --------------------- APP START ---------------------
-st.set_page_config("ExoticBill", page_icon="🧾")
-init_db()
-
-# --------------------- LOGIN SYSTEM ---------------------
-st.title("🧾 ExoticBill Login")
-role = None
-
-with st.form("login_form"):
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    submit = st.form_submit_button("Login")
-
-if submit:
+# --------------------- LOGIN FUNCTION ---------------------
+def login(username, password):
     if username == "AutoExotic" and password == "AutoExotic123":
-        role = "admin"
+        st.session_state.logged_in = True
+        st.session_state.role = "admin"
+        st.session_state.username = username
     elif username == "User" and password == "User123":
-        role = "user"
+        st.session_state.logged_in = True
+        st.session_state.role = "user"
+        st.session_state.username = username
     else:
         st.error("Invalid credentials")
 
+# --------------------- LOGIN FORM ---------------------
+if not st.session_state.logged_in:
+    st.title("🧾 ExoticBill Login")
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Login")
+        if submit:
+            login(username, password)
+    st.stop()
+
+# --------------------- LOGOUT SIDEBAR ---------------------
+with st.sidebar:
+    st.success(f"Logged in as: {st.session_state.username}")
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.session_state.role = None
+        st.session_state.username = ""
+        st.rerun()
+
+# --------------------- BILLING CONSTANTS ---------------------
+ITEM_PRICES = {
+    "Repair Kit": 400,
+    "Car Wax": 2000,
+    "NOS": 1500,
+    "Adv Lockpick": 400,
+    "Lockpick": 250,
+    "Wash Kit": 300
+}
+PART_REPAIR_COST = 125
+NORMAL_REPAIR_LABOR = 450
+
 # --------------------- USER DASHBOARD ---------------------
-if role == "user":
-    st.title("🧾 ExoticBill - Add New Bill (User)")
-
-    ITEM_PRICES = {
-        "Repair Kit": 400,
-        "Car Wax": 2000,
-        "NOS": 1500,
-        "Adv Lockpick": 400,
-        "Lockpick": 250,
-        "Wash Kit": 300
-    }
-
-    PART_REPAIR_COST = 125
-    NORMAL_REPAIR_LABOR = 450
+if st.session_state.role == "user":
+    st.title("🧾 ExoticBill - Add New Bill")
 
     employee_cid = st.text_input("Your CID (Employee)")
     customer_cid = st.text_input("Customer CID")
@@ -167,7 +181,7 @@ if role == "user":
             st.success(f"Bill Saved! Total: ${total:.2f}")
 
 # --------------------- ADMIN DASHBOARD ---------------------
-if role == "admin":
+elif st.session_state.role == "admin":
     st.title("👑 ExoticBill Admin Panel")
 
     st.subheader("➕ Add New Employee")
@@ -183,16 +197,19 @@ if role == "admin":
     st.subheader("📊 Billing Summary by Employee CID")
 
     cid_options = get_all_employee_cids()
-    cid_dict = {f"{name} ({cid})": cid for cid, name in cid_options}
-    selected_display = st.selectbox("Select Employee", list(cid_dict.keys()))
-    selected_cid = cid_dict[selected_display]
-    name = get_employee_name(selected_cid)
+    if cid_options:
+        cid_dict = {f"{name} ({cid})": cid for cid, name in cid_options}
+        selected_display = st.selectbox("Select Employee", list(cid_dict.keys()))
+        selected_cid = cid_dict[selected_display]
+        name = get_employee_name(selected_cid)
 
-    summary, total = get_billing_summary_by_cid(selected_cid)
+        summary, total = get_billing_summary_by_cid(selected_cid)
 
-    st.info(f"Selected: {name} (CID: {selected_cid})")
-    st.metric("💰 Total Billing", f"${total:.2f}")
-    st.markdown(f"- ITEMS: ${summary['ITEMS']:.2f}")
-    st.markdown(f"- UPGRADES: ${summary['UPGRADES']:.2f}")
-    st.markdown(f"- REPAIR: ${summary['REPAIR']:.2f}")
-    st.markdown(f"- CUSTOMIZATION: ${summary['CUSTOMIZATION']:.2f}")
+        st.info(f"Selected: {name} (CID: {selected_cid})")
+        st.metric("💰 Total Billing", f"${total:.2f}")
+        st.markdown(f"- ITEMS: ${summary['ITEMS']:.2f}")
+        st.markdown(f"- UPGRADES: ${summary['UPGRADES']:.2f}")
+        st.markdown(f"- REPAIR: ${summary['REPAIR']:.2f}")
+        st.markdown(f"- CUSTOMIZATION: ${summary['CUSTOMIZATION']:.2f}")
+    else:
+        st.warning("No employees found. Please add an employee.")
