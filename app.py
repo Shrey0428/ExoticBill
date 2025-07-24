@@ -11,11 +11,13 @@ if "logged_in" not in st.session_state:
     st.session_state.username = ""
 if "bill_saved" not in st.session_state:
     st.session_state.bill_saved = False
+    st.session_state.bill_total = 0.0
 
 # --------- DATABASE INITIALIZATION -----------
 def init_db():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
+    # bills table
     c.execute("""
         CREATE TABLE IF NOT EXISTS bills (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,14 +27,15 @@ def init_db():
             details TEXT,
             total_amount REAL,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )"""
-    )
+        )
+    """)
+    # employees table
     c.execute("""
         CREATE TABLE IF NOT EXISTS employees (
             cid TEXT PRIMARY KEY,
             name TEXT
-        )"""
-    )
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -43,7 +46,8 @@ def save_bill(employee_cid, customer_cid, billing_type, details, total_amount):
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
     c.execute(
-        "INSERT INTO bills (employee_cid, customer_cid, billing_type, details, total_amount) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO bills (employee_cid, customer_cid, billing_type, details, total_amount) "
+        "VALUES (?, ?, ?, ?, ?)",
         (employee_cid, customer_cid, billing_type, details, total_amount)
     )
     conn.commit()
@@ -85,10 +89,14 @@ def get_all_employee_cids():
 def get_billing_summary_by_cid(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
-    summary, total = {}, 0
-    for bt in ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"]:
-        c.execute("SELECT SUM(total_amount) FROM bills WHERE employee_cid = ? AND billing_type = ?", (cid, bt))
-        amt = c.fetchone()[0] or 0
+    summary = {}
+    total = 0.0
+    for bt in ["ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"]:
+        c.execute(
+            "SELECT SUM(total_amount) FROM bills WHERE employee_cid = ? AND billing_type = ?",
+            (cid, bt)
+        )
+        amt = c.fetchone()[0] or 0.0
         summary[bt] = amt
         total += amt
     conn.close()
@@ -104,6 +112,15 @@ def get_employee_bills(cid):
     rows = c.fetchall()
     conn.close()
     return rows
+
+def delete_bill_by_id(bill_id):
+    conn = sqlite3.connect("auto_exotic_billing.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM bills WHERE id = ?", (bill_id,))
+    conn.commit()
+    conn.close()
+    st.success("Bill deleted successfully!")
+    st.experimental_rerun()
 
 def get_all_customers():
     conn = sqlite3.connect("auto_exotic_billing.db")
@@ -128,19 +145,11 @@ def get_total_billing():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
     c.execute("SELECT SUM(total_amount) FROM bills")
-    total = c.fetchone()[0] or 0
+    total = c.fetchone()[0] or 0.0
     conn.close()
     return total
 
-def delete_bill_by_id(bill_id):
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    c = conn.cursor()
-    c.execute("DELETE FROM bills WHERE id = ?", (bill_id,))
-    conn.commit()
-    conn.close()
-    st.success("Bill deleted successfully!")
-
-# --------- LOGIN HANDLER -----------
+# --------- LOGIN HANDLER & PAGE -----------
 def login(u, p):
     if u == "AutoExotic" and p == "AutoExotic123":
         st.session_state.logged_in = True
@@ -153,17 +162,16 @@ def login(u, p):
     else:
         st.error("Invalid credentials")
 
-# --------- LOGIN PAGE -----------
 if not st.session_state.logged_in:
     st.title("🧾 ExoticBill Login")
     with st.form("login_form"):
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
         if st.form_submit_button("Login"):
-            login(u, p)
+            login(username, password)
     st.stop()
 
-# --------- SIDEBAR LOGOUT -----------
+# --------- LOGOUT SIDEBAR -----------
 with st.sidebar:
     st.success(f"Logged in as: {st.session_state.username}")
     if st.button("Logout"):
@@ -173,29 +181,39 @@ with st.sidebar:
 # --------- USER PANEL -----------
 if st.session_state.role == "user":
     st.title("🧾 ExoticBill - Add New Bill")
+
+    # show success if saved
     if st.session_state.bill_saved:
         st.success(f"Bill saved! Total: ${st.session_state.bill_total:.2f}")
         st.session_state.bill_saved = False
 
     ITEM_PRICES = {
-        "Repair Kit": 400, "Car Wax": 2000, "NOS": 1500,
-        "Adv Lockpick": 400, "Lockpick": 250, "Wash Kit": 300
+        "Repair Kit": 400,
+        "Car Wax": 2000,
+        "NOS": 1500,
+        "Adv Lockpick": 400,
+        "Lockpick": 250,
+        "Wash Kit": 300
     }
-    PART_COST, LABOR = 125, 450
+    PART_COST = 125
+    LABOR = 450
 
-    billing_type = st.selectbox("Select Billing Type",
-        ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"])
+    billing_type = st.selectbox(
+        "Select Billing Type",
+        ["ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"]
+    )
 
+    # repair type outside form for dynamic rerun
     if billing_type == "REPAIR":
-        repair_type = st.radio("Repair Type",
-            ["Normal Repair","Advanced Repair"])
+        repair_type = st.radio("Repair Type", ["Normal Repair", "Advanced Repair"])
     else:
         repair_type = None
 
     with st.form("bill_form", clear_on_submit=True):
         emp = st.text_input("Your CID (Employee)")
         cust = st.text_input("Customer CID")
-        total, details = 0.0, ""
+        total = 0.0
+        details = ""
 
         if billing_type == "ITEMS":
             sel = {}
@@ -204,7 +222,7 @@ if st.session_state.role == "user":
                 if qty:
                     sel[item] = qty
                     total += price * qty
-            details = ", ".join(f"{i}×{q}" for i,q in sel.items())
+            details = ", ".join(f"{i}×{q}" for i, q in sel.items())
 
         elif billing_type == "UPGRADES":
             amt = st.number_input("Base upgrade amount ($)", min_value=0.0)
@@ -238,39 +256,87 @@ if st.session_state.role == "user":
 elif st.session_state.role == "admin":
     st.title("👑 ExoticBill Admin Panel")
 
-    # Phase 1: Business Overview
+    # — Phase 1.1: Business Overview —
     st.subheader("📈 Business Overview")
     total_biz = get_total_billing()
     st.metric("💵 Total Revenue", f"${total_biz:.2f}")
 
-    # Phase 1: Employee Management
+    # — Phase 1.2: Employee Management —
     st.markdown("---")
     st.subheader("➕ Add New Employee")
     with st.form("add_employee"):
         new_cid = st.text_input("New Employee CID")
         new_name = st.text_input("Employee Name")
         if st.form_submit_button("Add Employee"):
-            add_employee(new_cid, new_name)
-            st.success("Employee added successfully!")
-            st.experimental_rerun()
+            if new_cid and new_name:
+                add_employee(new_cid, new_name)
+                st.success("Employee added successfully!")
+                st.experimental_rerun()
 
     st.subheader("➖ Delete Employee")
     emps = get_all_employee_cids()
     if emps:
-        del_opts = {f"{name} ({cid})": cid for cid,name in emps}
-        sel_del = st.selectbox("Select Employee to Delete", list(del_opts.keys()), key="del_emp")
+        del_opts = {f"{name} ({cid})": cid for cid, name in emps}
+        sel_del = st.selectbox("Select Employee to Delete", list(del_opts.keys()))
         if st.button("Delete Employee"):
             delete_employee(del_opts[sel_del])
-            st.success(f"Deleted {sel_del} from employees.")
+            st.success(f"Deleted {sel_del}.")
             st.experimental_rerun()
     else:
         st.info("No employees to delete.")
 
-    # Continue with existing Employee/Customer views...
-    choice = st.radio("Action", ["View Employee Billings","View Customer Data"])
+    st.markdown("---")
+    choice = st.radio("Action", ["View Employee Billings", "View Customer Data"])
 
+    # — Phase 1.3: View Employee Billings —
     if choice == "View Employee Billings":
-        # … existing code for employee billing summary & details …
+        emps = get_all_employee_cids()
+        if emps:
+            cid_dict = {f"{name} ({cid})": cid for cid, name in emps}
+            selected_display = st.selectbox("Select Employee", list(cid_dict.keys()))
+            selected_cid = cid_dict[selected_display]
+            name = get_employee_name(selected_cid)
 
+            view_type = st.radio("View Type", ["Overall Billings", "Detailed Billings"])
+            if view_type == "Overall Billings":
+                summary, total = get_billing_summary_by_cid(selected_cid)
+                st.info(f"{name} (CID: {selected_cid})")
+                st.metric("💰 Total Billing", f"${total:.2f}")
+                st.markdown(f"- ITEMS: ${summary['ITEMS']:.2f}")
+                st.markdown(f"- UPGRADES: ${summary['UPGRADES']:.2f}")
+                st.markdown(f"- REPAIR: ${summary['REPAIR']:.2f}")
+                st.markdown(f"- CUSTOMIZATION: ${summary['CUSTOMIZATION']:.2f}")
+            else:  # Detailed Billings
+                rows = get_employee_bills(selected_cid)
+                if rows:
+                    df = pd.DataFrame(
+                        rows,
+                        columns=["Bill ID", "Customer CID", "Type", "Details", "Amount", "Timestamp"]
+                    )
+                    for _, row in df.iterrows():
+                        with st.expander(f"#{row['Bill ID']} — ${row['Amount']:.2f}"):
+                            st.write(row.drop("Bill ID"))
+                            if st.button(f"🗑️ Delete #{row['Bill ID']}", key=f"del_{row['Bill ID']}"):
+                                delete_bill_by_id(row['Bill ID'])
+                else:
+                    st.info("No bills for this employee.")
+        else:
+            st.warning("No employees found.")
+
+    # — Phase 1.4: View Customer Data —
     else:
-        # … existing code for customer data table …
+        st.subheader("📂 Customer Order History")
+        customers = get_all_customers()
+        if customers:
+            sel_cust = st.selectbox("Select Customer CID", customers)
+            data = get_customer_bills(sel_cust)
+            if data:
+                df = pd.DataFrame(
+                    data,
+                    columns=["Employee CID", "Type", "Details", "Amount", "Timestamp"]
+                )
+                st.table(df)
+            else:
+                st.info("No records for this customer.")
+        else:
+            st.warning("No customer data found.")
