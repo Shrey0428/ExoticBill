@@ -225,7 +225,7 @@ with st.sidebar:
     st.success(f"Logged in as: {st.session_state.username}")
     if st.button("Logout"):
         st.session_state.clear()
-        st.experimental_rerun()
+
 
 # ---------- USER PANEL -----------
 if st.session_state.role == "user":
@@ -294,7 +294,7 @@ if st.session_state.role == "user":
                 save_bill(emp_cid, cust_cid, btype, det, total)
                 st.session_state.bill_saved = True
                 st.session_state.bill_total = total
-                st.experimental_rerun()
+              
 
     st.markdown("---")
     st.subheader("🎟️ Manage Membership (Add/Update)")
@@ -339,7 +339,7 @@ elif st.session_state.role == "admin":
             if ecid and ename:
                 add_employee(ecid, ename)
                 st.success("Employee added!")
-                st.experimental_rerun()
+                
 
     st.subheader("➖ Delete Employee")
     emps = get_all_employee_cids()
@@ -349,7 +349,7 @@ elif st.session_state.role == "admin":
         if st.button("Delete Employee", key="btn_del_emp"):
             delete_employee(opts[sel_del])
             st.success(f"Deleted {sel_del}")
-            st.experimental_rerun()
+      
     else:
         st.info("No employees to delete.")
 
