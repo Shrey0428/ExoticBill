@@ -1,0 +1,41 @@
+def init_db():
+    conn = sqlite3.connect("auto_exotic_billing.db")
+    c = conn.cursor()
+
+    # Bills table
+    c.execute("""
+      CREATE TABLE IF NOT EXISTS bills (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_cid TEXT,
+        customer_cid TEXT,
+        billing_type TEXT,
+        details TEXT,
+        total_amount REAL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    """)
+
+    # Employees table
+    c.execute("""
+      CREATE TABLE IF NOT EXISTS employees (
+        cid TEXT PRIMARY KEY,
+        name TEXT
+      )
+    """)
+
+    # Memberships table (may exist without dop)
+    c.execute("""
+      CREATE TABLE IF NOT EXISTS memberships (
+        customer_cid TEXT PRIMARY KEY,
+        tier TEXT
+      )
+    """)
+
+    # If 'dop' column is missing, add it
+    c.execute("PRAGMA table_info(memberships)")
+    cols = [row[1] for row in c.fetchall()]
+    if "dop" not in cols:
+        c.execute("ALTER TABLE memberships ADD COLUMN dop DATETIME")
+
+    conn.commit()
+    conn.close()
