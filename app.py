@@ -407,6 +407,5 @@ elif st.session_state.role == "admin":
             if st.button("Remove", key="rm_btn"):
                 remove_membership(rm.split(" ")[0])
                 st.success(f"Removed {rm}")
-                st.experimental_rerun()
         else:
             st.info("No memberships.")
