@@ -433,7 +433,7 @@ elif st.session_state.role == "admin":
                 if cm:
                     add_membership(cm, tr)
                     st.success(f"{cm} set to {tr}")
-                    st.experimental_rerun()
+                
 
         st.markdown("**Current Memberships**")
         mems = get_all_memberships()
