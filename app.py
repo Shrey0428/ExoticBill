@@ -13,7 +13,7 @@ if "bill_saved" not in st.session_state:
     st.session_state.bill_saved = False
     st.session_state.bill_total = 0.0
 
-# --------- PRICING & MEMBERSHIP DISCOUNTS -----------
+# --------- PRICING & DISCOUNTS -----------
 ITEM_PRICES = {
     "Repair Kit": 400,
     "Car Wax": 2000,
@@ -36,7 +36,6 @@ MEMBERSHIP_DISCOUNTS = {
 def init_db():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
-    # bills
     c.execute("""
       CREATE TABLE IF NOT EXISTS bills (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,21 +47,18 @@ def init_db():
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     """)
-    # employees
     c.execute("""
       CREATE TABLE IF NOT EXISTS employees (
         cid TEXT PRIMARY KEY,
         name TEXT
       )
     """)
-    # memberships without dop
     c.execute("""
       CREATE TABLE IF NOT EXISTS memberships (
         customer_cid TEXT PRIMARY KEY,
         tier TEXT
       )
     """)
-    # add dop if missing
     c.execute("PRAGMA table_info(memberships)")
     cols = [r[1] for r in c.fetchall()]
     if "dop" not in cols:
@@ -72,11 +68,11 @@ def init_db():
 
 init_db()
 
-# --------- PURGE EXPIRED MEMBERSHIPS -----------
+# --------- PURGE EXPIRED MEMBERSHIPS (1 MINUTE) -----------
 def purge_expired_memberships():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
-    cutoff = datetime.now() - timedelta(days=7)
+    cutoff = datetime.now() - timedelta(minutes=1)
     c.execute(
         "DELETE FROM memberships WHERE dop <= ?",
         (cutoff.strftime("%Y-%m-%d %H:%M:%S"),)
@@ -89,8 +85,7 @@ purge_expired_memberships()
 # --------- DATABASE HELPERS -----------
 def save_bill(emp, cust, btype, det, amt):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    c = conn.cursor()
-    c.execute(
+    conn.execute(
         "INSERT INTO bills (employee_cid, customer_cid, billing_type, details, total_amount) VALUES (?,?,?,?,?)",
         (emp, cust, btype, det, amt)
     )
@@ -99,9 +94,8 @@ def save_bill(emp, cust, btype, det, amt):
 
 def add_employee(cid, name):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    c = conn.cursor()
     try:
-        c.execute("INSERT INTO employees (cid, name) VALUES (?,?)", (cid, name))
+        conn.execute("INSERT INTO employees (cid, name) VALUES (?,?)", (cid, name))
         conn.commit()
     except sqlite3.IntegrityError:
         st.warning("Employee CID already exists.")
@@ -320,14 +314,12 @@ if st.session_state.role == "user":
         if mem:
             tier, dop_str = mem["tier"], mem["dop"]
             dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S")
-            expiry = dop + timedelta(days=7)
+            expiry = dop + timedelta(minutes=1)
             rem = expiry - datetime.now()
             if rem.total_seconds()>0:
                 st.info(f"{lookup}: {tier}, expires in {rem.days}d {rem.seconds//3600}h on {expiry}")
             else:
                 st.info(f"{lookup}: {tier}, expired on {expiry}")
-        else:
-            st.info(f"{lookup} has no membership")
 
 # --------- ADMIN PANEL -----------
 elif st.session_state.role == "admin":
@@ -350,8 +342,7 @@ elif st.session_state.role == "admin":
     emps = get_all_employee_cids()
     if emps:
         opts = {f"{n} ({c})": c for c,n in emps}
-        sel_del = st.selectbox("Select Employee to Delete",
-                               list(opts.keys()), key="del_emp")
+        sel_del = st.selectbox("Select Employee to Delete", list(opts.keys()), key="del_emp")
         if st.button("Delete Employee", key="btn_del_emp"):
             delete_employee(opts[sel_del])
             st.success(f"Deleted {sel_del}")
@@ -373,8 +364,7 @@ elif st.session_state.role == "admin":
             m = {f"{n} ({c})": c for c,n in emps}
             sel_emp = st.selectbox("Select Employee", list(m.keys()), key="view_emp")
             cid = m[sel_emp]; name = get_employee_name(cid)
-            vtype = st.radio("View Type",
-                             ["Overall","Detailed"], key="view_type")
+            vtype = st.radio("View Type", ["Overall","Detailed"], key="view_type")
             if vtype == "Overall":
                 summ, tot = get_billing_summary_by_cid(cid)
                 st.info(f"{name} (CID: {cid})")
@@ -389,8 +379,7 @@ elif st.session_state.role == "admin":
                     for _, r in df.iterrows():
                         with st.expander(f"#{r['Bill ID']}—${r['Amount']:.2f}"):
                             st.write(r.drop("Bill ID"))
-                            if st.button(f"Delete #{r['Bill ID']}",
-                                         key=f"del_bill_{r['Bill ID']}"):
+                            if st.button(f"Delete #{r['Bill ID']}", key=f"del_bill_{r['Bill ID']}"):
                                 delete_bill_by_id(r['Bill ID'])
                 else:
                     st.info("No bills found.")
@@ -429,9 +418,7 @@ elif st.session_state.role == "admin":
         st.subheader("🎟️ Manage Memberships")
         with st.form("admin_mem", clear_on_submit=True):
             cm = st.text_input("Customer CID", key="admin_mem_cust")
-            tr = st.selectbox("Tier",
-                              ["Tier1","Tier2","Tier3","Racer"],
-                              key="admin_mem_tier")
+            tr = st.selectbox("Tier", ["Tier1","Tier2","Tier3","Racer"], key="admin_mem_tier")
             if st.form_submit_button("Add/Update Membership"):
                 if cm:
                     add_membership(cm, tr)
@@ -443,7 +430,7 @@ elif st.session_state.role == "admin":
         if mems:
             dfm = pd.DataFrame(mems, columns=["Customer CID","Tier","DOP"])
             dfm["DOP"] = pd.to_datetime(dfm["DOP"])
-            dfm["Expiry"] = dfm["DOP"] + timedelta(days=7)
+            dfm["Expiry"] = dfm["DOP"] + timedelta(minutes=1)
             now = datetime.now()
             dfm["Time Left"] = dfm["Expiry"].apply(
                 lambda e: f"{max((e-now).days,0)}d {max((e-now).seconds//3600,0)}h"
