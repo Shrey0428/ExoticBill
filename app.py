@@ -2,8 +2,10 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-# --------- CONFIG & SESSION STATE -----------
+# ---------- CONFIG & SESSION STATE -----------
+IST = ZoneInfo("Asia/Kolkata")
 st.set_page_config(page_title="ExoticBill", page_icon="🧾")
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -13,14 +15,10 @@ if "bill_saved" not in st.session_state:
     st.session_state.bill_saved = False
     st.session_state.bill_total = 0.0
 
-# --------- PRICING & DISCOUNTS -----------
+# ---------- PRICING & DISCOUNTS -----------
 ITEM_PRICES = {
-    "Repair Kit": 400,
-    "Car Wax": 2000,
-    "NOS": 1500,
-    "Adv Lockpick": 400,
-    "Lockpick": 250,
-    "Wash Kit": 300
+    "Repair Kit": 400, "Car Wax": 2000, "NOS": 1500,
+    "Adv Lockpick": 400, "Lockpick": 250, "Wash Kit": 300
 }
 PART_COST = 125
 LABOR = 450
@@ -32,10 +30,11 @@ MEMBERSHIP_DISCOUNTS = {
     "Racer": {"REPAIR": 0.00, "CUSTOMIZATION": 0.00}
 }
 
-# --------- DATABASE INITIALIZATION & MIGRATION -----------
+# ---------- DATABASE INITIALIZATION & MIGRATION -----------
 def init_db():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
+    # bills table
     c.execute("""
       CREATE TABLE IF NOT EXISTS bills (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,18 +46,21 @@ def init_db():
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     """)
+    # employees table
     c.execute("""
       CREATE TABLE IF NOT EXISTS employees (
         cid TEXT PRIMARY KEY,
         name TEXT
       )
     """)
+    # memberships (may lack dop)
     c.execute("""
       CREATE TABLE IF NOT EXISTS memberships (
         customer_cid TEXT PRIMARY KEY,
         tier TEXT
       )
     """)
+    # add dop column if missing
     c.execute("PRAGMA table_info(memberships)")
     cols = [r[1] for r in c.fetchall()]
     if "dop" not in cols:
@@ -68,11 +70,11 @@ def init_db():
 
 init_db()
 
-# --------- PURGE EXPIRED MEMBERSHIPS (1 MINUTE) -----------
+# ---------- PURGE EXPIRED MEMBERSHIPS (7 DAYS) -----------
 def purge_expired_memberships():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
-    cutoff = datetime.now() - timedelta(minutes=1)
+    cutoff = datetime.now(IST) - timedelta(days=7)
     c.execute(
         "DELETE FROM memberships WHERE dop <= ?",
         (cutoff.strftime("%Y-%m-%d %H:%M:%S"),)
@@ -82,7 +84,7 @@ def purge_expired_memberships():
 
 purge_expired_memberships()
 
-# --------- DATABASE HELPERS -----------
+# ---------- DATABASE HELPERS -----------
 def save_bill(emp, cust, btype, det, amt):
     conn = sqlite3.connect("auto_exotic_billing.db")
     conn.execute(
@@ -109,7 +111,7 @@ def delete_employee(cid):
 
 def add_membership(cust, tier):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    dop = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    dop = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "INSERT OR REPLACE INTO memberships (customer_cid, tier, dop) VALUES (?,?,?)",
         (cust, tier, dop)
@@ -200,7 +202,7 @@ def get_total_billing():
     conn.close()
     return total
 
-# --------- LOGIN HANDLER & PAGE -----------
+# ---------- LOGIN HANDLER & PAGE -----------
 def login(u, p):
     if u == "AutoExotic" and p == "AutoExotic123":
         st.session_state.logged_in, st.session_state.role, st.session_state.username = True, "admin", u
@@ -218,14 +220,14 @@ if not st.session_state.logged_in:
             login(uname, pwd)
     st.stop()
 
-# --------- LOGOUT SIDEBAR -----------
+# ---------- LOGOUT SIDEBAR -----------
 with st.sidebar:
     st.success(f"Logged in as: {st.session_state.username}")
     if st.button("Logout"):
         st.session_state.clear()
         st.experimental_rerun()
 
-# --------- USER PANEL -----------
+# ---------- USER PANEL -----------
 if st.session_state.role == "user":
     st.title("🧾 ExoticBill - Add New Bill")
     if st.session_state.bill_saved:
@@ -313,15 +315,16 @@ if st.session_state.role == "user":
         mem = get_membership(lookup)
         if mem:
             tier, dop_str = mem["tier"], mem["dop"]
-            dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S")
-            expiry = dop + timedelta(minutes=1)
-            rem = expiry - datetime.now()
-            if rem.total_seconds()>0:
-                st.info(f"{lookup}: {tier}, expires in {rem.days}d {rem.seconds//3600}h on {expiry}")
-            else:
-                st.info(f"{lookup}: {tier}, expired on {expiry}")
+            dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+            expiry = dop + timedelta(days=7)
+            now = datetime.now(IST)
+            rem = expiry - now
+            days, hours = max(rem.days,0), max(rem.seconds//3600,0)
+            st.info(f"{lookup}: {tier}, expires in {days}d {hours}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
+        else:
+            st.info(f"Membership has expired for {lookup}")
 
-# --------- ADMIN PANEL -----------
+# ---------- ADMIN PANEL -----------
 elif st.session_state.role == "admin":
     st.title("👑 ExoticBill Admin Panel")
     st.subheader("📈 Business Overview")
@@ -409,7 +412,12 @@ elif st.session_state.role == "admin":
         rows = []
         for cid, name in get_all_employee_cids():
             summ, tot = get_billing_summary_by_cid(cid)
-            rows.append({"Employee Name": name, "Employee CID": cid, **summ, "Total": tot})
+            rows.append({
+                "Employee Name": name,
+                "Employee CID": cid,
+                **summ,
+                "Total": tot
+            })
         df_rank = pd.DataFrame(rows).sort_values(by=metric, ascending=False).reset_index(drop=True)
         df_rank.index += 1
         st.table(df_rank)
@@ -428,16 +436,24 @@ elif st.session_state.role == "admin":
         st.markdown("**Current Memberships**")
         mems = get_all_memberships()
         if mems:
-            dfm = pd.DataFrame(mems, columns=["Customer CID","Tier","DOP"])
-            dfm["DOP"] = pd.to_datetime(dfm["DOP"])
-            dfm["Expiry"] = dfm["DOP"] + timedelta(minutes=1)
-            now = datetime.now()
-            dfm["Time Left"] = dfm["Expiry"].apply(
-                lambda e: f"{max((e-now).days,0)}d {max((e-now).seconds//3600,0)}h"
-            )
-            st.table(dfm)
+            rows = []
+            for cust, tier, dop_str in mems:
+                dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                expiry = dop + timedelta(days=7)
+                now = datetime.now(IST)
+                rem = expiry - now
+                days = max(rem.days,0)
+                hours = max(rem.seconds//3600,0)
+                rows.append({
+                    "Customer CID": cust,
+                    "Tier": tier,
+                    "DOP": dop.strftime("%Y-%m-%d %H:%M:%S") + " IST",
+                    "Expiry": expiry.strftime("%Y-%m-%d %H:%M:%S") + " IST",
+                    "Time Left": f"{days}d {hours}h"
+                })
+            st.table(pd.DataFrame(rows))
             rm = st.selectbox("Remove membership for",
-                              [f"{c} ({t})" for c,t,_ in mems],
+                              [f"{r['Customer CID']} ({r['Tier']})" for r in rows],
                               key="rm_mem")
             if st.button("Remove Membership", key="rm_btn"):
                 remove_membership(rm.split(" ")[0])
