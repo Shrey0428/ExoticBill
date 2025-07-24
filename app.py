@@ -21,12 +21,8 @@ for key, default in [
 
 # ---------- PRICING & DISCOUNTS -----------
 ITEM_PRICES = {
-    "Repair Kit": 400,
-    "Car Wax": 2000,
-    "NOS": 1500,
-    "Adv Lockpick": 400,
-    "Lockpick": 250,
-    "Wash Kit": 300,
+    "Repair Kit": 400, "Car Wax": 2000, "NOS": 1500,
+    "Adv Lockpick": 400, "Lockpick": 250, "Wash Kit": 300
 }
 PART_COST = 125
 LABOR = 450
@@ -84,11 +80,11 @@ purge_expired_memberships()
 
 # ---------- DATABASE HELPERS -----------
 def save_bill(emp, cust, btype, det, amt):
-    now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    now_ist = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect("auto_exotic_billing.db")
     conn.execute(
         "INSERT INTO bills (employee_cid, customer_cid, billing_type, details, total_amount, timestamp) VALUES (?,?,?,?,?,?)",
-        (emp, cust, btype, det, amt, now)
+        (emp, cust, btype, det, amt, now_ist)
     )
     conn.commit()
     conn.close()
@@ -109,11 +105,11 @@ def delete_employee(cid):
     conn.close()
 
 def add_membership(cust, tier):
-    dop = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    dop_ist = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect("auto_exotic_billing.db")
     conn.execute(
         "INSERT OR REPLACE INTO memberships (customer_cid, tier, dop) VALUES (?,?,?)",
-        (cust, tier, dop)
+        (cust, tier, dop_ist)
     )
     conn.commit()
     conn.close()
@@ -126,9 +122,7 @@ def remove_membership(cust):
 
 def get_membership(cust):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    row = conn.execute(
-        "SELECT tier, dop FROM memberships WHERE customer_cid = ?", (cust,)
-    ).fetchone()
+    row = conn.execute("SELECT tier, dop FROM memberships WHERE customer_cid = ?", (cust,)).fetchone()
     conn.close()
     return {"tier": row[0], "dop": row[1]} if row else None
 
@@ -301,7 +295,7 @@ if st.session_state.role == "user":
             now = datetime.now(IST)
             rem = expiry - now
             days, hours = max(rem.days,0), max(rem.seconds//3600,0)
-            st.info(f"{lookup}: {tier}, expires in {days}d {hours}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
+            st.info(f"{lookup}: {tier}, expires in {days}d {hours}h on {expiry} IST")
         else:
             st.info(f"Membership has expired for {lookup}")
 
@@ -333,7 +327,12 @@ elif st.session_state.role == "admin":
         st.info("No employees to delete.")
 
     st.markdown("---")
-    choice = st.radio("Action", ["View Employee Billings","View Customer Data","Employee Rankings","Manage Memberships"], key="admin_choice")
+    choice = st.radio("Action", [
+        "View Employee Billings",
+        "View Customer Data",
+        "Employee Rankings",
+        "Manage Memberships"
+    ], key="admin_choice")
 
     if choice == "View Employee Billings":
         emps = get_all_employee_cids()
@@ -351,8 +350,10 @@ elif st.session_state.role == "admin":
             else:
                 rows = get_employee_bills(cid)
                 if rows:
-                    df = pd.DataFrame(rows, columns=["Bill ID","Customer CID","Type","Details","Amount","Timestamp"])
-                    df["Timestamp"] = df["Timestamp"] + " IST"
+                    df = pd.DataFrame(rows, columns=[
+                        "Bill ID","Customer CID","Type","Details","Amount","Timestamp"
+                    ])
+                    # Timestamp is already stored in IST
                     for _, r in df.iterrows():
                         with st.expander(f"#{r['Bill ID']}—${r['Amount']:.2f}"):
                             st.write(r.drop("Bill ID"))
@@ -370,8 +371,10 @@ elif st.session_state.role == "admin":
             sc = st.selectbox("Select Customer CID", custs, key="view_cust")
             data = get_customer_bills(sc)
             if data:
-                df = pd.DataFrame(data, columns=["Employee CID","Type","Details","Amount","Timestamp"])
-                df["Timestamp"] = df["Timestamp"] + " IST"
+                df = pd.DataFrame(data, columns=[
+                    "Employee CID","Type","Details","Amount","Timestamp"
+                ])
+                # Timestamp stored in IST
                 st.table(df)
             else:
                 st.info("No records for this customer.")
@@ -412,12 +415,14 @@ elif st.session_state.role == "admin":
                 rows.append({
                     "Customer CID": cust,
                     "Tier": tier,
-                    "DOP": dop.strftime("%Y-%m-%d %H:%M:%S")+" IST",
-                    "Expiry": expiry.strftime("%Y-%m-%d %H:%M:%S")+" IST",
+                    "DOP": dop_str + " IST",
+                    "Expiry": expiry.strftime("%Y-%m-%d %H:%M:%S") + " IST",
                     "Time Left": f"{days}d {hours}h"
                 })
             st.table(pd.DataFrame(rows))
-            rm = st.selectbox("Remove membership for", [f"{r['Customer CID']} ({r['Tier']})" for r in rows], key="rm_mem")
+            rm = st.selectbox("Remove membership for",
+                              [f"{r['Customer CID']} ({r['Tier']})" for r in rows],
+                              key="rm_mem")
             if st.button("Remove Membership", key="rm_btn"):
                 remove_membership(rm.split(" ")[0])
                 st.success(f"Removed membership for {rm.split(' ')[0]}")
