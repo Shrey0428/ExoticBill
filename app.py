@@ -50,7 +50,7 @@ def init_db():
         billing_type TEXT,
         details TEXT,
         total_amount REAL,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        timestamp TEXT
       )
     """)
     c.execute("""
@@ -62,13 +62,10 @@ def init_db():
     c.execute("""
       CREATE TABLE IF NOT EXISTS memberships (
         customer_cid TEXT PRIMARY KEY,
-        tier TEXT
+        tier TEXT,
+        dop TEXT
       )
     """)
-    c.execute("PRAGMA table_info(memberships)")
-    cols = [r[1] for r in c.fetchall()]
-    if "dop" not in cols:
-        c.execute("ALTER TABLE memberships ADD COLUMN dop DATETIME")
     conn.commit()
     conn.close()
 
@@ -79,10 +76,7 @@ def purge_expired_memberships():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
     cutoff = datetime.now(IST) - timedelta(days=7)
-    c.execute(
-        "DELETE FROM memberships WHERE dop <= ?",
-        (cutoff.strftime("%Y-%m-%d %H:%M:%S"),)
-    )
+    c.execute("DELETE FROM memberships WHERE dop <= ?", (cutoff.strftime("%Y-%m-%d %H:%M:%S"),))
     conn.commit()
     conn.close()
 
@@ -90,10 +84,11 @@ purge_expired_memberships()
 
 # ---------- DATABASE HELPERS -----------
 def save_bill(emp, cust, btype, det, amt):
+    now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect("auto_exotic_billing.db")
     conn.execute(
-        "INSERT INTO bills (employee_cid, customer_cid, billing_type, details, total_amount) VALUES (?,?,?,?,?)",
-        (emp, cust, btype, det, amt)
+        "INSERT INTO bills (employee_cid, customer_cid, billing_type, details, total_amount, timestamp) VALUES (?,?,?,?,?,?)",
+        (emp, cust, btype, det, amt, now)
     )
     conn.commit()
     conn.close()
@@ -114,8 +109,8 @@ def delete_employee(cid):
     conn.close()
 
 def add_membership(cust, tier):
-    conn = sqlite3.connect("auto_exotic_billing.db")
     dop = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect("auto_exotic_billing.db")
     conn.execute(
         "INSERT OR REPLACE INTO memberships (customer_cid, tier, dop) VALUES (?,?,?)",
         (cust, tier, dop)
@@ -236,18 +231,10 @@ if st.session_state.role == "user":
         st.success(f"Bill saved! Total: ${st.session_state.bill_total:.2f}")
         st.session_state.bill_saved = False
 
-    btype = st.selectbox(
-        "Select Billing Type",
-        ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"],
-        key="btype_user"
-    )
+    btype = st.selectbox("Select Billing Type", ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"], key="btype_user")
     rtype = None
     if btype == "REPAIR":
-        rtype = st.radio(
-            "Repair Type",
-            ["Normal Repair","Advanced Repair"],
-            key="rtype_user"
-        )
+        rtype = st.radio("Repair Type", ["Normal Repair","Advanced Repair"], key="rtype_user")
 
     with st.form("bill_form", clear_on_submit=True):
         emp_cid  = st.text_input("Your CID (Employee)", key="bill_emp")
@@ -257,42 +244,26 @@ if st.session_state.role == "user":
         if btype == "ITEMS":
             sel = {}
             for item, price in ITEM_PRICES.items():
-                q = st.number_input(
-                    f"{item} (${price}) – Qty",
-                    min_value=0, step=1,
-                    key=f"qty_{item}"
-                )
+                q = st.number_input(f"{item} (${price}) – Qty", min_value=0, step=1, key=f"qty_{item}")
                 if q:
                     sel[item] = q
                     total += price * q
             det = ", ".join(f"{i}×{q}" for i,q in sel.items())
 
         elif btype == "UPGRADES":
-            amt = st.number_input(
-                "Base upgrade amount ($)",
-                min_value=0.0, key="upgrade_amt"
-            )
+            amt = st.number_input("Base upgrade amount ($)", min_value=0.0, key="upgrade_amt")
             total, det = amt*1.5, f"Upgrade: ${amt}"
 
         elif btype == "REPAIR":
             if rtype == "Normal Repair":
-                b = st.number_input(
-                    "Base repair charge ($)",
-                    min_value=0.0, key="norm_rep"
-                )
+                b = st.number_input("Base repair charge ($)", min_value=0.0, key="norm_rep")
                 total, det = b+LABOR, f"Normal Repair: ${b}+${LABOR} labor"
             else:
-                p = st.number_input(
-                    "Number of parts repaired",
-                    min_value=0, step=1, key="adv_rep"
-                )
+                p = st.number_input("Number of parts repaired", min_value=0, step=1, key="adv_rep")
                 total, det = p*PART_COST, f"Advanced Repair: {p}×${PART_COST}"
 
         else:  # CUSTOMIZATION
-            c_amt = st.number_input(
-                "Base customization amount ($)",
-                min_value=0.0, key="cust_amt"
-            )
+            c_amt = st.number_input("Base customization amount ($)", min_value=0.0, key="cust_amt")
             total, det = c_amt*2, f"Customization: ${c_amt}×2"
 
         # apply membership discount
@@ -308,18 +279,12 @@ if st.session_state.role == "user":
                 st.warning("Fill all fields.")
             else:
                 save_bill(emp_cid, cust_cid, btype, det, total)
-                st.session_state.bill_saved = True
-                st.session_state.bill_total = total
 
     st.markdown("---")
     st.subheader("🎟️ Manage Membership (Add/Update)")
     with st.form("mem_form_user", clear_on_submit=True):
         m_cust = st.text_input("Customer CID", key="mem_cust")
-        m_tier = st.selectbox(
-            "Tier",
-            ["Tier1","Tier2","Tier3","Racer"],
-            key="mem_tier"
-        )
+        m_tier = st.selectbox("Tier", ["Tier1","Tier2","Tier3","Racer"], key="mem_tier")
         if st.form_submit_button("Add/Update Membership"):
             if m_cust:
                 add_membership(m_cust, m_tier)
@@ -336,10 +301,7 @@ if st.session_state.role == "user":
             now = datetime.now(IST)
             rem = expiry - now
             days, hours = max(rem.days,0), max(rem.seconds//3600,0)
-            st.info(
-                f"{lookup}: {tier}, expires in {days}d {hours}h on "
-                f"{expiry.strftime('%Y-%m-%d %H:%M:%S')} IST"
-            )
+            st.info(f"{lookup}: {tier}, expires in {days}d {hours}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
         else:
             st.info(f"Membership has expired for {lookup}")
 
@@ -363,11 +325,7 @@ elif st.session_state.role == "admin":
     emps = get_all_employee_cids()
     if emps:
         opts = {f"{n} ({c})": c for c,n in emps}
-        sel_del = st.selectbox(
-            "Select Employee to Delete",
-            list(opts.keys()),
-            key="del_emp"
-        )
+        sel_del = st.selectbox("Select Employee to Delete", list(opts.keys()), key="del_emp")
         if st.button("Delete Employee", key="btn_del_emp"):
             delete_employee(opts[sel_del])
             st.success(f"Deleted {sel_del}")
@@ -375,16 +333,7 @@ elif st.session_state.role == "admin":
         st.info("No employees to delete.")
 
     st.markdown("---")
-    choice = st.radio(
-        "Action",
-        [
-            "View Employee Billings",
-            "View Customer Data",
-            "Employee Rankings",
-            "Manage Memberships"
-        ],
-        key="admin_choice"
-    )
+    choice = st.radio("Action", ["View Employee Billings","View Customer Data","Employee Rankings","Manage Memberships"], key="admin_choice")
 
     if choice == "View Employee Billings":
         emps = get_all_employee_cids()
@@ -402,9 +351,8 @@ elif st.session_state.role == "admin":
             else:
                 rows = get_employee_bills(cid)
                 if rows:
-                    df = pd.DataFrame(rows, columns=[
-                        "Bill ID","Customer CID","Type","Details","Amount","Timestamp"
-                    ])
+                    df = pd.DataFrame(rows, columns=["Bill ID","Customer CID","Type","Details","Amount","Timestamp"])
+                    df["Timestamp"] = df["Timestamp"] + " IST"
                     for _, r in df.iterrows():
                         with st.expander(f"#{r['Bill ID']}—${r['Amount']:.2f}"):
                             st.write(r.drop("Bill ID"))
@@ -422,9 +370,8 @@ elif st.session_state.role == "admin":
             sc = st.selectbox("Select Customer CID", custs, key="view_cust")
             data = get_customer_bills(sc)
             if data:
-                df = pd.DataFrame(data, columns=[
-                    "Employee CID","Type","Details","Amount","Timestamp"
-                ])
+                df = pd.DataFrame(data, columns=["Employee CID","Type","Details","Amount","Timestamp"])
+                df["Timestamp"] = df["Timestamp"] + " IST"
                 st.table(df)
             else:
                 st.info("No records for this customer.")
@@ -433,20 +380,11 @@ elif st.session_state.role == "admin":
 
     elif choice == "Employee Rankings":
         st.subheader("🏆 Employee Rankings")
-        metric = st.selectbox(
-            "Rank by:",
-            ["Total","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"],
-            key="rank_metric"
-        )
+        metric = st.selectbox("Rank by:", ["Total","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"], key="rank_metric")
         rows = []
         for cid, name in get_all_employee_cids():
             summ, tot = get_billing_summary_by_cid(cid)
-            rows.append({
-                "Employee Name": name,
-                "Employee CID": cid,
-                **summ,
-                "Total": tot
-            })
+            rows.append({"Employee Name": name, "Employee CID": cid, **summ, "Total": tot})
         df_rank = pd.DataFrame(rows).sort_values(by=metric, ascending=False).reset_index(drop=True)
         df_rank.index += 1
         st.table(df_rank)
@@ -470,8 +408,7 @@ elif st.session_state.role == "admin":
                 expiry = dop + timedelta(days=7)
                 now = datetime.now(IST)
                 rem = expiry - now
-                days = max(rem.days,0)
-                hours = max(rem.seconds//3600,0)
+                days, hours = max(rem.days,0), max(rem.seconds//3600,0)
                 rows.append({
                     "Customer CID": cust,
                     "Tier": tier,
@@ -480,11 +417,7 @@ elif st.session_state.role == "admin":
                     "Time Left": f"{days}d {hours}h"
                 })
             st.table(pd.DataFrame(rows))
-            rm = st.selectbox(
-                "Remove membership for",
-                [f"{r['Customer CID']} ({r['Tier']})" for r in rows],
-                key="rm_mem"
-            )
+            rm = st.selectbox("Remove membership for", [f"{r['Customer CID']} ({r['Tier']})" for r in rows], key="rm_mem")
             if st.button("Remove Membership", key="rm_btn"):
                 remove_membership(rm.split(" ")[0])
                 st.success(f"Removed membership for {rm.split(' ')[0]}")
