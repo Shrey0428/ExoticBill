@@ -307,7 +307,7 @@ if st.session_state.role == "user":
             if m_cust:
                 add_membership(m_cust, m_tier)
                 st.success(f"{m_cust} → {m_tier}")
-                st.experimental_rerun()
+          
 
     st.subheader("🔍 Check Membership")
     lookup = st.text_input("Customer CID to check", key="lookup_user")
