@@ -179,7 +179,7 @@ def delete_bill_by_id(bid):
     conn.commit()
     conn.close()
     st.success("Bill deleted.")
-    st.experimental_rerun()
+ 
 
 def get_all_customers():
     conn = sqlite3.connect("auto_exotic_billing.db")
