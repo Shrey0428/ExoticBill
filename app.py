@@ -13,37 +13,6 @@ if "bill_saved" not in st.session_state:
     st.session_state.bill_saved = False
     st.session_state.bill_total = 0.0
 
-# ---------- PRICING CONSTANTS -----------
-ITEM_PRICES = {
-    "Repair Kit": 400,
-    "Car Wax": 2000,
-    "NOS": 1500,
-    "Adv Lockpick": 400,
-    "Lockpick": 250,
-    "Wash Kit": 300
-}
-LABOR = 450
-
-ADV_REPAIR_PARTS = [
-    "Axle", "Brake Pad", "Clutch kit", "Engine Parts",
-    "Fuel Injector", "Fuel Strap", "Radiator Part",
-    "Suspension Part", "Tire Repair Kit", "transmission part", "wires"
-]
-SALE_PRICE_PER_PART = 125
-PART_COSTS = {
-    "Axle": 42,
-    "Brake Pad": 61,
-    "Clutch kit": 25,
-    "Engine Parts": 31,
-    "Fuel Injector": 17,
-    "Fuel Strap": 34,
-    "Radiator Part": 18,
-    "Suspension Part": 28,
-    "Tire Repair Kit": 42,
-    "transmission part": 67,
-    "wires": 39
-}
-
 # ---------- DATABASE INITIALIZATION -----------
 def init_db():
     conn = sqlite3.connect("auto_exotic_billing.db")
@@ -215,6 +184,13 @@ if st.session_state.role == "user":
         st.success(f"Bill saved! Total: ${st.session_state.bill_total:.2f}")
         st.session_state.bill_saved = False
 
+    ITEM_PRICES = {
+        "Repair Kit": 400, "Car Wax": 2000, "NOS": 1500,
+        "Adv Lockpick": 400, "Lockpick": 250, "Wash Kit": 300
+    }
+    PART_COST = 125
+    LABOR = 450
+
     billing_type = st.selectbox(
         "Select Billing Type",
         ["ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"]
@@ -251,25 +227,9 @@ if st.session_state.role == "user":
                 total = base + LABOR
                 details = f"Normal Repair: ${base} + ${LABOR} labor"
             else:
-                st.subheader("🔧 Advanced Repair Parts")
-                selected_parts = {}
-                sale_total = 0.0
-                cost_total = 0.0
-                for part in ADV_REPAIR_PARTS:
-                    qty = st.number_input(f"{part} Qty", min_value=0, step=1, key=f"adv_{part}")
-                    if qty:
-                        selected_parts[part] = qty
-                        sale_total += qty * SALE_PRICE_PER_PART
-                        cost_total += qty * PART_COSTS[part]
-                if selected_parts:
-                    part_list = ", ".join(f"{p}×{q}" for p, q in selected_parts.items())
-                    details = (
-                        f"Advanced Repair Parts: {part_list} | "
-                        f"Sale: ${sale_total:.2f} | Cost: ${cost_total:.2f}"
-                    )
-                    total = sale_total
-                else:
-                    st.warning("Please select at least one part for Advanced Repair.")
+                parts = st.number_input("Number of parts repaired", min_value=0, step=1)
+                total = parts * PART_COST
+                details = f"Advanced Repair: {parts}×${PART_COST}"
 
         else:  # CUSTOMIZATION
             c_amt = st.number_input("Base customization amount ($)", min_value=0.0)
@@ -283,14 +243,15 @@ if st.session_state.role == "user":
                 save_bill(emp, cust, billing_type, details, total)
                 st.session_state.bill_saved = True
                 st.session_state.bill_total = total
+# ---------- ADMIN PANEL -----------
 elif st.session_state.role == "admin":
     st.title("👑 ExoticBill Admin Panel")
 
-    # Business Overview
+    # Phase 1.1: Business Overview
     st.subheader("📈 Business Overview")
     st.metric("💵 Total Revenue", f"${get_total_billing():.2f}")
 
-    # Add & Delete Employee
+    # Phase 1.2: Add & Delete Employee
     st.markdown("---")
     st.subheader("➕ Add New Employee")
     with st.form("add_employee", clear_on_submit=True):
@@ -315,6 +276,7 @@ elif st.session_state.role == "admin":
         st.info("No employees to delete.")
 
     st.markdown("---")
+    # Phase 2: Add Rankings to Action chooser
     choice = st.radio("Action", [
         "View Employee Billings",
         "View Customer Data",
@@ -329,8 +291,8 @@ elif st.session_state.role == "admin":
             sel = st.selectbox("Select Employee", list(cid_dict.keys()))
             cid = cid_dict[sel]
             name = get_employee_name(cid)
-            view_type = st.radio("View Type", ["Overall Billings", "Detailed Billings"])
 
+            view_type = st.radio("View Type", ["Overall Billings", "Detailed Billings"])
             if view_type == "Overall Billings":
                 summary, total = get_billing_summary_by_cid(cid)
                 st.info(f"{name} (CID: {cid})")
@@ -339,17 +301,18 @@ elif st.session_state.role == "admin":
                 st.markdown(f"- UPGRADES: ${summary['UPGRADES']:.2f}")
                 st.markdown(f"- REPAIR: ${summary['REPAIR']:.2f}")
                 st.markdown(f"- CUSTOMIZATION: ${summary['CUSTOMIZATION']:.2f}")
-
-            else:  # Detailed Billings
+            else:
                 rows = get_employee_bills(cid)
                 if rows:
                     df = pd.DataFrame(rows, columns=[
-                        "Bill ID","Customer CID","Type","Details","Amount","Timestamp"
-                    ])
+                        "Bill ID","Customer CID","Type","Details","Amount","Timestamp"])
                     for _, row in df.iterrows():
                         with st.expander(f"#{row['Bill ID']} — ${row['Amount']:.2f}"):
                             st.write(row.drop("Bill ID"))
-                            if st.button(f"🗑️ Delete #{row['Bill ID']}", key=f"del_{row['Bill ID']}"):
+                            if st.button(
+                                f"🗑️ Delete #{row['Bill ID']}",
+                                key=f"del_{row['Bill ID']}"
+                            ):
                                 delete_bill_by_id(row['Bill ID'])
                 else:
                     st.info("No bills found for this employee.")
@@ -364,9 +327,10 @@ elif st.session_state.role == "admin":
             sel_cust = st.selectbox("Select Customer CID", customers)
             data = get_customer_bills(sel_cust)
             if data:
-                df = pd.DataFrame(data, columns=[
-                    "Employee CID","Type","Details","Amount","Timestamp"
-                ])
+                df = pd.DataFrame(
+                    data,
+                    columns=["Employee CID","Type","Details","Amount","Timestamp"]
+                )
                 st.table(df)
             else:
                 st.info("No records for this customer.")
@@ -374,11 +338,12 @@ elif st.session_state.role == "admin":
             st.warning("No customer data found.")
 
     # Employee Rankings
-    else:
+    else:  # choice == "Employee Rankings"
         st.subheader("🏆 Employee Rankings")
         metric = st.selectbox("Rank employees by:", [
             "Total", "ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"
         ])
+
         emps = get_all_employee_cids()
         rows = []
         for cid, name in emps:
@@ -389,6 +354,8 @@ elif st.session_state.role == "admin":
                 **summary,
                 "Total": total
             })
-        df_rank = pd.DataFrame(rows).sort_values(by=metric, ascending=False).reset_index(drop=True)
+
+        df_rank = pd.DataFrame(rows)
+        df_rank = df_rank.sort_values(by=metric, ascending=False).reset_index(drop=True)
         df_rank.index += 1
         st.table(df_rank)
