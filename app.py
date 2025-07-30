@@ -21,8 +21,12 @@ for key, default in [
 
 # ---------- PRICING & DISCOUNTS -----------
 ITEM_PRICES = {
-    "Repair Kit": 400, "Car Wax": 2000, "NOS": 1500,
-    "Adv Lockpick": 400, "Lockpick": 250, "Wash Kit": 300
+    "Repair Kit": 400,
+    "Car Wax": 2000,
+    "NOS": 1500,
+    "Adv Lockpick": 400,
+    "Lockpick": 250,
+    "Wash Kit": 300,
 }
 PART_COST = 125
 LABOR = 450
@@ -38,6 +42,7 @@ MEMBERSHIP_DISCOUNTS = {
 def init_db():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
+    # bills
     c.execute("""
       CREATE TABLE IF NOT EXISTS bills (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,12 +54,14 @@ def init_db():
         timestamp TEXT
       )
     """)
+    # employees
     c.execute("""
       CREATE TABLE IF NOT EXISTS employees (
         cid TEXT PRIMARY KEY,
         name TEXT
       )
     """)
+    # memberships
     c.execute("""
       CREATE TABLE IF NOT EXISTS memberships (
         customer_cid TEXT PRIMARY KEY,
@@ -260,7 +267,6 @@ if st.session_state.role == "user":
             c_amt = st.number_input("Base customization amount ($)", min_value=0.0, key="cust_amt")
             total, det = c_amt*2, f"Customization: ${c_amt}×2"
 
-        # apply membership discount
         mem = get_membership(cust_cid)
         if mem:
             disc = MEMBERSHIP_DISCOUNTS.get(mem["tier"], {}).get(btype, 0)
@@ -295,7 +301,7 @@ if st.session_state.role == "user":
             now = datetime.now(IST)
             rem = expiry - now
             days, hours = max(rem.days,0), max(rem.seconds//3600,0)
-            st.info(f"{lookup}: {tier}, expires in {days}d {hours}h on {expiry} IST")
+            st.info(f"{lookup}: {tier}, expires in {days}d {hours}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
         else:
             st.info(f"Membership has expired for {lookup}")
 
@@ -331,7 +337,8 @@ elif st.session_state.role == "admin":
         "View Employee Billings",
         "View Customer Data",
         "Employee Rankings",
-        "Manage Memberships"
+        "Manage Memberships",
+        "Employee Performance"
     ], key="admin_choice")
 
     if choice == "View Employee Billings":
@@ -353,7 +360,6 @@ elif st.session_state.role == "admin":
                     df = pd.DataFrame(rows, columns=[
                         "Bill ID","Customer CID","Type","Details","Amount","Timestamp"
                     ])
-                    # Timestamp is already stored in IST
                     for _, r in df.iterrows():
                         with st.expander(f"#{r['Bill ID']}—${r['Amount']:.2f}"):
                             st.write(r.drop("Bill ID"))
@@ -374,7 +380,6 @@ elif st.session_state.role == "admin":
                 df = pd.DataFrame(data, columns=[
                     "Employee CID","Type","Details","Amount","Timestamp"
                 ])
-                # Timestamp stored in IST
                 st.table(df)
             else:
                 st.info("No records for this customer.")
@@ -383,48 +388,47 @@ elif st.session_state.role == "admin":
 
     elif choice == "Employee Rankings":
         st.subheader("🏆 Employee Rankings")
-        metric = st.selectbox("Rank by:", ["Total","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"], key="rank_metric")
+        metric = st.selectbox("Rank by:", [
+            "Total","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"
+        ], key="rank_metric")
         rows = []
         for cid, name in get_all_employee_cids():
             summ, tot = get_billing_summary_by_cid(cid)
-            rows.append({"Employee Name": name, "Employee CID": cid, **summ, "Total": tot})
+            rows.append({
+                "Employee Name": name,
+                "Employee CID": cid,
+                **summ,
+                "Total": tot
+            })
         df_rank = pd.DataFrame(rows).sort_values(by=metric, ascending=False).reset_index(drop=True)
         df_rank.index += 1
         st.table(df_rank)
 
-    else:  # Manage Memberships
-        st.subheader("🎟️ Manage Memberships")
-        with st.form("admin_mem", clear_on_submit=True):
-            cm = st.text_input("Customer CID", key="admin_mem_cust")
-            tr = st.selectbox("Tier", ["Tier1","Tier2","Tier3","Racer"], key="admin_mem_tier")
-            if st.form_submit_button("Add/Update Membership"):
-                if cm:
-                    add_membership(cm, tr)
-                    st.success(f"{cm} → {tr}")
+    else:  # Employee Performance
+        st.subheader("📊 Employee Daily Sales Trend")
+        emps = get_all_employee_cids()
+        emp_map = {f"{name} ({cid})": cid for cid, name in emps}
+        sel = st.selectbox("Select Employee", list(emp_map.keys()), key="perf_emp")
+        cid = emp_map[sel]
 
-        st.markdown("**Current Memberships**")
-        mems = get_all_memberships()
-        if mems:
-            rows = []
-            for cust, tier, dop_str in mems:
-                dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-                expiry = dop + timedelta(days=7)
-                now = datetime.now(IST)
-                rem = expiry - now
-                days, hours = max(rem.days,0), max(rem.seconds//3600,0)
-                rows.append({
-                    "Customer CID": cust,
-                    "Tier": tier,
-                    "DOP": dop_str + " IST",
-                    "Expiry": expiry.strftime("%Y-%m-%d %H:%M:%S") + " IST",
-                    "Time Left": f"{days}d {hours}h"
-                })
-            st.table(pd.DataFrame(rows))
-            rm = st.selectbox("Remove membership for",
-                              [f"{r['Customer CID']} ({r['Tier']})" for r in rows],
-                              key="rm_mem")
-            if st.button("Remove Membership", key="rm_btn"):
-                remove_membership(rm.split(" ")[0])
-                st.success(f"Removed membership for {rm.split(' ')[0]}")
+        conn = sqlite3.connect("auto_exotic_billing.db")
+        c = conn.cursor()
+        c.execute("""
+            SELECT DATE(timestamp) AS date,
+                   SUM(total_amount) AS daily_sales
+            FROM bills
+            WHERE employee_cid = ?
+            GROUP BY DATE(timestamp)
+            ORDER BY DATE(timestamp)
+        """, (cid,))
+        rows = c.fetchall()
+        conn.close()
+
+        if not rows:
+            st.info("No sales data for this employee yet.")
         else:
-            st.info("No memberships defined.")
+            df = pd.DataFrame(rows, columns=["date", "daily_sales"])
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date")
+            st.line_chart(df["daily_sales"])
+            st.dataframe(df.rename_axis("Date").reset_index())
