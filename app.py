@@ -4,9 +4,10 @@ import pandas as pd
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-# -------- CONFIG & SESSION STATE -----------
+# ---------- CONFIG & SESSION STATE -----------
 IST = ZoneInfo("Asia/Kolkata")
 st.set_page_config(page_title="ExoticBill", page_icon="🧾")
+
 for key, default in [
     ("logged_in", False),
     ("role", None),
@@ -17,7 +18,7 @@ for key, default in [
     if key not in st.session_state:
         st.session_state[key] = default
 
-# -------- PRICING & DISCOUNTS -----------
+# ---------- PRICING & DISCOUNTS -----------
 ITEM_PRICES = {
     "Repair Kit": 400,
     "Car Wax": 2000,
@@ -28,6 +29,7 @@ ITEM_PRICES = {
 }
 PART_COST = 125
 LABOR = 450
+
 MEMBERSHIP_DISCOUNTS = {
     "Tier1": {"REPAIR": 0.20, "CUSTOMIZATION": 0.10},
     "Tier2": {"REPAIR": 0.33, "CUSTOMIZATION": 0.20},
@@ -35,7 +37,7 @@ MEMBERSHIP_DISCOUNTS = {
     "Racer": {"REPAIR": 0.00, "CUSTOMIZATION": 0.00},
 }
 
-# -------- DATABASE INIT & MIGRATION -----------
+# ---------- DATABASE INIT & MIGRATION -----------
 def init_db():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
@@ -68,7 +70,7 @@ def init_db():
 
 init_db()
 
-# -------- PURGE EXPIRED MEMBERSHIPS -----------
+# ---------- PURGE EXPIRED MEMBERSHIPS (7 DAYS) -----------
 def purge_expired_memberships():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
@@ -79,7 +81,7 @@ def purge_expired_memberships():
 
 purge_expired_memberships()
 
-# -------- DB HELPERS -----------
+# ---------- DATABASE HELPERS -----------
 def save_bill(emp, cust, btype, det, amt):
     now_ist = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect("auto_exotic_billing.db")
@@ -123,7 +125,9 @@ def remove_membership(cust):
 
 def get_membership(cust):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    row = conn.execute("SELECT tier, dop FROM memberships WHERE customer_cid = ?", (cust,)).fetchone()
+    row = conn.execute(
+        "SELECT tier, dop FROM memberships WHERE customer_cid = ?", (cust,)
+    ).fetchone()
     conn.close()
     return {"tier": row[0], "dop": row[1]} if row else None
 
@@ -141,9 +145,9 @@ def get_employee_name(cid):
 
 def get_all_employee_cids():
     conn = sqlite3.connect("auto_exotic_billing.db")
-    data = conn.execute("SELECT cid, name FROM employees").fetchall()
+    rows = conn.execute("SELECT cid, name FROM employees").fetchall()
     conn.close()
-    return data
+    return rows
 
 def get_billing_summary_by_cid(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
@@ -194,16 +198,12 @@ def get_total_billing():
     conn.close()
     return total
 
-# -------- LOGIN & LOGOUT -----------
+# ---------- LOGIN & LOGOUT -----------
 def login(u, p):
     if u == "AutoExotic" and p == "AutoExotic123":
-        st.session_state.logged_in = True
-        st.session_state.role = "admin"
-        st.session_state.username = u
+        st.session_state.logged_in, st.session_state.role, st.session_state.username = True, "admin", u
     elif u == "User" and p == "User123":
-        st.session_state.logged_in = True
-        st.session_state.role = "user"
-        st.session_state.username = u
+        st.session_state.logged_in, st.session_state.role, st.session_state.username = True, "user", u
     else:
         st.error("Invalid credentials")
 
@@ -221,49 +221,59 @@ with st.sidebar:
     if st.button("Logout"):
         st.session_state.clear()
 
-# -------- USER PANEL -----------
+# ---------- USER PANEL -----------
 if st.session_state.role == "user":
     st.title("🧾 ExoticBill - Add New Bill")
     if st.session_state.bill_saved:
         st.success(f"Bill saved! Total: ${st.session_state.bill_total:.2f}")
         st.session_state.bill_saved = False
 
-    btype = st.selectbox("Select Billing Type", ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"], key="btype_user")
+    btype = st.selectbox("Select Billing Type",
+                         ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"],
+                         key="btype_user")
     rtype = None
     if btype == "REPAIR":
-        rtype = st.radio("Repair Type", ["Normal Repair","Advanced Repair"], key="rtype_user")
+        rtype = st.radio("Repair Type",
+                         ["Normal Repair","Advanced Repair"],
+                         key="rtype_user")
 
     with st.form("bill_form", clear_on_submit=True):
         emp_cid  = st.text_input("Your CID (Employee)", key="bill_emp")
-        cust_cid = st.text_input("Customer CID", key="bill_cust")
+        cust_cid = st.text_input("Customer CID",      key="bill_cust")
         total, det = 0.0, ""
 
         if btype == "ITEMS":
             sel = {}
             for item, price in ITEM_PRICES.items():
-                q = st.number_input(f"{item} (${price}) – Qty", min_value=0, step=1, key=f"qty_{item}")
+                q = st.number_input(f"{item} (${price}) – Qty",
+                                    min_value=0, step=1,
+                                    key=f"qty_{item}")
                 if q:
                     sel[item] = q
                     total += price * q
             det = ", ".join(f"{i}×{q}" for i,q in sel.items())
 
         elif btype == "UPGRADES":
-            amt = st.number_input("Base upgrade amount ($)", min_value=0.0, key="upgrade_amt")
+            amt = st.number_input("Base upgrade amount ($)",
+                                  min_value=0.0, key="upgrade_amt")
             total = amt * 1.5
             det = f"Upgrade: ${amt}"
 
         elif btype == "REPAIR":
             if rtype == "Normal Repair":
-                b = st.number_input("Base repair charge ($)", min_value=0.0, key="norm_rep")
+                b = st.number_input("Base repair charge ($)",
+                                     min_value=0.0, key="norm_rep")
                 total = b + LABOR
                 det = f"Normal Repair: ${b}+${LABOR}"
             else:
-                p = st.number_input("Number of parts repaired", min_value=0, step=1, key="adv_rep")
+                p = st.number_input("Number of parts repaired",
+                                     min_value=0, step=1, key="adv_rep")
                 total = p * PART_COST
                 det = f"Advanced Repair: {p}×${PART_COST}"
 
         else:  # CUSTOMIZATION
-            c_amt = st.number_input("Base customization amount ($)", min_value=0.0, key="cust_amt")
+            c_amt = st.number_input("Base customization amount ($)",
+                                     min_value=0.0, key="cust_amt")
             total = c_amt * 2
             det = f"Customization: ${c_amt}×2"
 
@@ -281,28 +291,6 @@ if st.session_state.role == "user":
                 save_bill(emp_cid, cust_cid, btype, det, total)
                 st.session_state.bill_saved = True
                 st.session_state.bill_total = total
-
-    st.markdown("---")
-    st.subheader("🎟️ Manage Membership")
-    with st.form("mem_form_user", clear_on_submit=True):
-        m_cust = st.text_input("Customer CID", key="mem_cust")
-        m_tier = st.selectbox("Tier", ["Tier1","Tier2","Tier3","Racer"], key="mem_tier")
-        if st.form_submit_button("Add/Update Membership"):
-            if m_cust:
-                add_membership(m_cust, m_tier)
-
-    st.subheader("🔍 Check Membership")
-    lookup = st.text_input("Customer CID to check", key="lookup_user")
-    if st.button("Check Membership", key="check_mem"):
-        mem = get_membership(lookup)
-        if mem:
-            tier, dop_str = mem["tier"], mem["dop"]
-            dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-            expiry = dop + timedelta(days=7)
-            rem = expiry - datetime.now(IST)
-            st.info(f"{lookup}: {tier}, expires in {rem.days}d {rem.seconds//3600}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
-        else:
-            st.info(f"Membership has expired for {lookup}")
 elif st.session_state.role == "admin":
     st.title("👑 ExoticBill Admin Panel")
     st.subheader("📈 Business Overview")
@@ -387,7 +375,9 @@ elif st.session_state.role == "admin":
     # — Employee Rankings —
     elif choice == "Employee Rankings":
         st.subheader("🏆 Employee Rankings")
-        metric = st.selectbox("Rank by:", ["Total","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"], key="rank_metric")
+        metric = st.selectbox("Rank by:", [
+            "Total","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"
+        ], key="rank_metric")
         rows = []
         for cid,name in get_all_employee_cids():
             summ, tot = get_billing_summary_by_cid(cid)
@@ -422,11 +412,13 @@ elif st.session_state.role == "admin":
                     "Time Left":f"{rem.days}d {rem.seconds//3600}h"
                 })
             st.table(pd.DataFrame(rows_mem))
-            rm = st.selectbox("Remove membership for", [f"{r['Customer CID']} ({r['Tier']})" for r in rows_mem], key="rm_mem")
+            rm = st.selectbox("Remove membership for",
+                              [f"{r['Customer CID']} ({r['Tier']})" for r in rows_mem],
+                              key="rm_mem")
             if st.button("Remove Membership", key="rm_btn"):
                 remove_membership(rm.split(" ")[0])
 
-    # — Employee Performance —
+    # — Employee Performance (fixed cut‐off) —
     elif choice == "Employee Performance":
         st.subheader("📊 Employee Performance")
         emps = get_all_employee_cids()
@@ -434,11 +426,13 @@ elif st.session_state.role == "admin":
         sel = st.selectbox("Select Employee", list(emp_map.keys()), key="perf_emp")
         cid = emp_map[sel]
 
+        # fetch daily sales
         conn = sqlite3.connect("auto_exotic_billing.db"); c = conn.cursor()
         c.execute("""
             SELECT DATE(timestamp) AS date, SUM(total_amount) AS daily_sales
             FROM bills WHERE employee_cid = ?
-            GROUP BY DATE(timestamp) ORDER BY DATE(timestamp)
+            GROUP BY DATE(timestamp)
+            ORDER BY DATE(timestamp)
         """, (cid,))
         perf_rows = c.fetchall(); conn.close()
 
@@ -449,11 +443,12 @@ elif st.session_state.role == "admin":
             df_perf["date"] = pd.to_datetime(df_perf["date"])
             df_perf = df_perf.set_index("date")
 
-            days      = st.number_input("Past days to include", min_value=1, max_value=365, value=7, key="perf_days")
-            comp      = st.selectbox("Compare sales", ["<",">","="], key="perf_comp")
-            thresh    = st.number_input("Threshold amount ($)", min_value=0.0, step=0.01, key="perf_thresh")
+            days   = st.number_input("Past days to include", 1, 365, 7, key="perf_days")
+            comp   = st.selectbox("Compare sales", ["<",">","="], key="perf_comp")
+            thresh = st.number_input("Threshold ($)", 0.0, step=0.01, key="perf_thresh")
 
-            cutoff_dt = datetime.now(IST) - timedelta(days=days)
+            # **DROP TZ for comparison** **
+            cutoff_dt = (datetime.now(IST) - timedelta(days=days)).replace(tzinfo=None)
             df_time   = df_perf[df_perf.index >= cutoff_dt]
 
             if comp == "<":
@@ -469,24 +464,25 @@ elif st.session_state.role == "admin":
             st.markdown("### Sales Trend Over Selected Period")
             st.line_chart(df_time["daily_sales"])
 
-    # — Employee Tracking —
+    # — Employee Tracking (team‐wide) —
     elif choice == "Employee Tracking":
         st.subheader("🔎 Employee Tracking Across Team")
-        days   = st.number_input("Past days to include", min_value=1, max_value=365, value=7, key="track_days")
+        days   = st.number_input("Past days to include", 1, 365, 7, key="track_days")
         comp   = st.selectbox("Compare total sales", ["<",">","="], key="track_comp")
-        thresh = st.number_input("Threshold amount ($)", min_value=0.0, step=0.01, key="track_thresh")
+        thresh = st.number_input("Threshold amount ($)", 0.0, step=0.01, key="track_thresh")
 
         cutoff_date = (datetime.now(IST) - timedelta(days=days)).strftime("%Y-%m-%d")
         conn = sqlite3.connect("auto_exotic_billing.db"); c = conn.cursor()
         c.execute("""
             SELECT employee_cid, SUM(total_amount) AS total_sales
-            FROM bills WHERE DATE(timestamp) >= ?
+            FROM bills
+            WHERE DATE(timestamp) >= ?
             GROUP BY employee_cid
         """, (cutoff_date,))
         track_rows = c.fetchall(); conn.close()
 
         matching = []
-        for cid, total in track_rows:
+        for cid,total in track_rows:
             if (comp=="<" and total<thresh) or (comp==">" and total>thresh) or (comp=="=" and total==thresh):
                 matching.append((cid, get_employee_name(cid), total))
 
