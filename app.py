@@ -432,3 +432,65 @@ elif st.session_state.role == "admin":
             df = df.set_index("date")
             st.line_chart(df["daily_sales"])
             st.dataframe(df.rename_axis("Date").reset_index())
+
+elif choice == "Employee Performance":
+    st.subheader("📊 Employee Daily Sales Trend & Advanced Filter")
+
+    # — Select Employee —
+    emps = get_all_employee_cids()  # list of (cid,name)
+    emp_map = {f"{name} ({cid})": cid for cid, name in emps}
+    sel = st.selectbox("Select Employee", list(emp_map.keys()), key="perf_emp")
+    cid = emp_map[sel]
+
+    # — Fetch & prepare daily sales DataFrame —
+    conn = sqlite3.connect("auto_exotic_billing.db")
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT DATE(timestamp) AS date,
+               SUM(total_amount) AS daily_sales
+        FROM bills
+        WHERE employee_cid = ?
+        GROUP BY DATE(timestamp)
+        ORDER BY DATE(timestamp)
+    """, (cid,))
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        st.info("No sales data for this employee yet.")
+    else:
+        df = pd.DataFrame(rows, columns=["date","daily_sales"])
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date")
+
+        # — Advanced filter controls —
+        st.markdown("### Filter by Time & Amount")
+        days      = st.number_input("Past days to include", min_value=1, max_value=365, value=7, key="perf_days")
+        comp      = st.selectbox("Compare sales", ["<", ">", "="], key="perf_comp")
+        threshold = st.number_input("Threshold amount ($)", min_value=0.0, step=0.01, key="perf_thresh")
+
+        # — Apply time window —
+        cutoff = datetime.now(IST) - timedelta(days=days)
+        df_time = df[df.index >= cutoff]
+
+        # — Apply comparator —
+        if comp == "<":
+            df_filtered = df_time[df_time["daily_sales"] < threshold]
+        elif comp == ">":
+            df_filtered = df_time[df_time["daily_sales"] > threshold]
+        else:
+            df_filtered = df_time[df_time["daily_sales"] == threshold]
+
+        # — Display filtered results —
+        st.markdown("### Filtered Daily Sales")
+        st.table(
+            df_filtered
+            .rename_axis("Date")
+            .rename(columns={"daily_sales": "Sales"})
+            .reset_index()
+        )
+
+        # — Always show full chart for context —
+        st.markdown("### Sales Trend Over Selected Period")
+        st.line_chart(df_time["daily_sales"])
+
