@@ -232,10 +232,14 @@ if st.session_state.role == "user":
         st.success(f"Bill saved! Total: ${st.session_state.bill_total:.2f}")
         st.session_state.bill_saved = False
 
-    btype = st.selectbox("Select Billing Type", ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"], key="btype_user")
+    btype = st.selectbox("Select Billing Type",
+                         ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"],
+                         key="btype_user")
     rtype = None
     if btype == "REPAIR":
-        rtype = st.radio("Repair Type", ["Normal Repair","Advanced Repair"], key="rtype_user")
+        rtype = st.radio("Repair Type",
+                         ["Normal Repair","Advanced Repair"],
+                         key="rtype_user")
 
     with st.form("bill_form", clear_on_submit=True):
         emp_cid  = st.text_input("Your CID (Employee)", key="bill_emp")
@@ -245,26 +249,31 @@ if st.session_state.role == "user":
         if btype == "ITEMS":
             sel = {}
             for item, price in ITEM_PRICES.items():
-                q = st.number_input(f"{item} (${price}) – Qty", min_value=0, step=1, key=f"qty_{item}")
+                q = st.number_input(f"{item} (${price}) – Qty",
+                                    min_value=0, step=1, key=f"qty_{item}")
                 if q:
                     sel[item] = q
                     total += price * q
             det = ", ".join(f"{i}×{q}" for i,q in sel.items())
 
         elif btype == "UPGRADES":
-            amt = st.number_input("Base upgrade amount ($)", min_value=0.0, key="upgrade_amt")
+            amt = st.number_input("Base upgrade amount ($)",
+                                  min_value=0.0, key="upgrade_amt")
             total, det = amt*1.5, f"Upgrade: ${amt}"
 
         elif btype == "REPAIR":
             if rtype == "Normal Repair":
-                b = st.number_input("Base repair charge ($)", min_value=0.0, key="norm_rep")
+                b = st.number_input("Base repair charge ($)",
+                                     min_value=0.0, key="norm_rep")
                 total, det = b+LABOR, f"Normal Repair: ${b}+${LABOR} labor"
             else:
-                p = st.number_input("Number of parts repaired", min_value=0, step=1, key="adv_rep")
+                p = st.number_input("Number of parts repaired",
+                                     min_value=0, step=1, key="adv_rep")
                 total, det = p*PART_COST, f"Advanced Repair: {p}×${PART_COST}"
 
         else:  # CUSTOMIZATION
-            c_amt = st.number_input("Base customization amount ($)", min_value=0.0, key="cust_amt")
+            c_amt = st.number_input("Base customization amount ($)",
+                                     min_value=0.0, key="cust_amt")
             total, det = c_amt*2, f"Customization: ${c_amt}×2"
 
         mem = get_membership(cust_cid)
@@ -284,7 +293,9 @@ if st.session_state.role == "user":
     st.subheader("🎟️ Manage Membership (Add/Update)")
     with st.form("mem_form_user", clear_on_submit=True):
         m_cust = st.text_input("Customer CID", key="mem_cust")
-        m_tier = st.selectbox("Tier", ["Tier1","Tier2","Tier3","Racer"], key="mem_tier")
+        m_tier = st.selectbox("Tier",
+                              ["Tier1","Tier2","Tier3","Racer"],
+                              key="mem_tier")
         if st.form_submit_button("Add/Update Membership"):
             if m_cust:
                 add_membership(m_cust, m_tier)
@@ -347,7 +358,7 @@ elif st.session_state.role == "admin":
             m = {f"{n} ({c})": c for c,n in emps}
             sel_emp = st.selectbox("Select Employee", list(m.keys()), key="view_emp")
             cid = m[sel_emp]; name = get_employee_name(cid)
-            vtype = st.radio("View Type", ["Overall","Detailed"], key="view_type")
+            vtype = st.radio("View Type", ["Overall", "Detailed"], key="view_type")
             if vtype == "Overall":
                 summ, tot = get_billing_summary_by_cid(cid)
                 st.info(f"{name} (CID: {cid})")
@@ -405,15 +416,15 @@ elif st.session_state.role == "admin":
         st.table(df_rank)
 
     else:  # Employee Performance
-        st.subheader("📊 Employee Daily Sales Trend")
+        st.subheader("📊 Employee Daily Sales Trend & Advanced Filter")
         emps = get_all_employee_cids()
         emp_map = {f"{name} ({cid})": cid for cid, name in emps}
-        sel = st.selectbox("Select Employee", list(emp_map.keys()), key="perf_emp")
-        cid = emp_map[sel]
+        sel_emp = st.selectbox("Select Employee", list(emp_map.keys()), key="perf_emp")
+        cid = emp_map[sel_emp]
 
         conn = sqlite3.connect("auto_exotic_billing.db")
-        c = conn.cursor()
-        c.execute("""
+        cur = conn.cursor()
+        cur.execute("""
             SELECT DATE(timestamp) AS date,
                    SUM(total_amount) AS daily_sales
             FROM bills
@@ -421,76 +432,41 @@ elif st.session_state.role == "admin":
             GROUP BY DATE(timestamp)
             ORDER BY DATE(timestamp)
         """, (cid,))
-        rows = c.fetchall()
+        rows = cur.fetchall()
         conn.close()
 
         if not rows:
             st.info("No sales data for this employee yet.")
         else:
-            df = pd.DataFrame(rows, columns=["date", "daily_sales"])
-            df["date"] = pd.to_datetime(df["date"])
-            df = df.set_index("date")
-            st.line_chart(df["daily_sales"])
-            st.dataframe(df.rename_axis("Date").reset_index())
+            df_perf = pd.DataFrame(rows, columns=["date", "daily_sales"])
+            df_perf["date"] = pd.to_datetime(df_perf["date"])
+            df_perf = df_perf.set_index("date")
 
-elif choice == "Employee Performance":
-    st.subheader("📊 Employee Daily Sales Trend & Advanced Filter")
+            st.markdown("### Filter by Time & Amount")
+            days      = st.number_input("Past days to include", min_value=1, max_value=365, value=7, key="perf_days")
+            comp      = st.selectbox("Compare sales", ["<", ">", "="], key="perf_comp")
+            threshold = st.number_input("Threshold amount ($)", min_value=0.0, step=0.01, key="perf_thresh")
 
-    # — Select Employee —
-    emps = get_all_employee_cids()  # list of (cid,name)
-    emp_map = {f"{name} ({cid})": cid for cid, name in emps}
-    sel = st.selectbox("Select Employee", list(emp_map.keys()), key="perf_emp")
-    cid = emp_map[sel]
+            cutoff = datetime.now(IST) - timedelta(days=days)
+            df_time = df_perf[df_perf.index >= cutoff]
 
-    # — Fetch & prepare daily sales DataFrame —
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    cur  = conn.cursor()
-    cur.execute("""
-        SELECT DATE(timestamp) AS date,
-               SUM(total_amount) AS daily_sales
-        FROM bills
-        WHERE employee_cid = ?
-        GROUP BY DATE(timestamp)
-        ORDER BY DATE(timestamp)
-    """, (cid,))
-    rows = cur.fetchall()
-    conn.close()
+            if comp == "<":
+                df_filtered = df_time[df_time["daily_sales"] < threshold]
+            elif comp == ">":
+                df_filtered = df_time[df_time["daily_sales"] > threshold]
+            else:
+                df_filtered = df_time[df_time["daily_sales"] == threshold]
 
-    if not rows:
-        st.info("No sales data for this employee yet.")
-    else:
-        df = pd.DataFrame(rows, columns=["date","daily_sales"])
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date")
+            st.markdown("### Filtered Daily Sales")
+            st.table(
+                df_filtered
+                .rename_axis("Date")
+                .rename(columns={"daily_sales": "Sales"})
+                .reset_index()
+            )
 
-        # — Advanced filter controls —
-        st.markdown("### Filter by Time & Amount")
-        days      = st.number_input("Past days to include", min_value=1, max_value=365, value=7, key="perf_days")
-        comp      = st.selectbox("Compare sales", ["<", ">", "="], key="perf_comp")
-        threshold = st.number_input("Threshold amount ($)", min_value=0.0, step=0.01, key="perf_thresh")
+            st.markdown("### Sales Trend Over Selected Period")
+            st.line_chart(df_time["daily_sales"])
 
-        # — Apply time window —
-        cutoff = datetime.now(IST) - timedelta(days=days)
-        df_time = df[df.index >= cutoff]
-
-        # — Apply comparator —
-        if comp == "<":
-            df_filtered = df_time[df_time["daily_sales"] < threshold]
-        elif comp == ">":
-            df_filtered = df_time[df_time["daily_sales"] > threshold]
-        else:
-            df_filtered = df_time[df_time["daily_sales"] == threshold]
-
-        # — Display filtered results —
-        st.markdown("### Filtered Daily Sales")
-        st.table(
-            df_filtered
-            .rename_axis("Date")
-            .rename(columns={"daily_sales": "Sales"})
-            .reset_index()
-        )
-
-        # — Always show full chart for context —
-        st.markdown("### Sales Trend Over Selected Period")
-        st.line_chart(df_time["daily_sales"])
-
+            if st.button("Employee Tracking", key="employee_tracking"):
+                st.info("Employee tracking feature coming soon!")
