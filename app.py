@@ -465,29 +465,40 @@ elif st.session_state.role == "admin":
             st.line_chart(df_time["daily_sales"])
 
     # — Employee Tracking (team‐wide) —
-    elif choice == "Employee Tracking":
+        elif choice == "Employee Tracking":
         st.subheader("🔎 Employee Tracking Across Team")
         days   = st.number_input("Past days to include", 1, 365, 7, key="track_days")
-        comp   = st.selectbox("Compare total sales", ["<",">","="], key="track_comp")
-        thresh = st.number_input("Threshold amount ($)", 0.0, step=0.01, key="track_thresh")
+        comp   = st.selectbox("Compare total sales", ["<", ">", "="], key="track_comp")
+        thresh = st.number_input("Threshold amount ($)", min_value=0.0, step=0.01, key="track_thresh")
 
         cutoff_date = (datetime.now(IST) - timedelta(days=days)).strftime("%Y-%m-%d")
-        conn = sqlite3.connect("auto_exotic_billing.db"); c = conn.cursor()
+
+        # Fetch aggregated sales in window
+        conn = sqlite3.connect("auto_exotic_billing.db")
+        c = conn.cursor()
         c.execute("""
             SELECT employee_cid, SUM(total_amount) AS total_sales
             FROM bills
             WHERE DATE(timestamp) >= ?
             GROUP BY employee_cid
         """, (cutoff_date,))
-        track_rows = c.fetchall(); conn.close()
+        sales_rows = c.fetchall()
+        conn.close()
+
+        # Build map of employee -> sales, defaulting to 0
+        sales_map = {cid: total for cid, total in sales_rows}
+        all_emps = get_all_employee_cids()  # list of (cid, name)
 
         matching = []
-        for cid,total in track_rows:
-            if (comp=="<" and total<thresh) or (comp==">" and total>thresh) or (comp=="=" and total==thresh):
-                matching.append((cid, get_employee_name(cid), total))
+        for cid, name in all_emps:
+            total = sales_map.get(cid, 0.0)
+            if (comp == "<" and total < thresh) or \
+               (comp == ">" and total > thresh) or \
+               (comp == "=" and abs(total - thresh) < 1e-6):
+                matching.append((cid, name, total))
 
         if not matching:
             st.info("No employees meet the criteria.")
         else:
-            df_match = pd.DataFrame(matching, columns=["CID","Name","Total Sales"])
+            df_match = pd.DataFrame(matching, columns=["CID", "Name", "Total Sales"])
             st.table(df_match)
