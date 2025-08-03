@@ -35,7 +35,7 @@ MEMBERSHIP_DISCOUNTS = {
     "Racer": {"REPAIR": 0.00, "CUSTOMIZATION": 0.00},
 }
 
-# ---------- DATABASE INITIALIZATION -----------
+# ---------- DATABASE INIT & MIGRATION -----------
 def init_db():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
@@ -63,17 +63,40 @@ def init_db():
         dop TEXT
       )
     """)
+    c.execute("""
+      CREATE TABLE IF NOT EXISTS membership_history (
+        customer_cid TEXT,
+        tier TEXT,
+        dop TEXT,
+        expired_at TEXT
+      )
+    """)
     conn.commit()
     conn.close()
 
 init_db()
 
-# ---------- PURGE EXPIRED MEMBERSHIPS (7 DAYS) -----------
+# ---------- PURGE EXPIRED MEMBERSHIPS (7 DAYS) WITH ARCHIVE -----------
 def purge_expired_memberships():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
-    cutoff = (datetime.now(IST) - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("DELETE FROM memberships WHERE dop <= ?", (cutoff,))
+    cutoff_dt = datetime.now(IST) - timedelta(days=7)
+    cutoff_str = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
+    expired = c.execute(
+        "SELECT customer_cid, tier, dop FROM memberships WHERE dop <= ?",
+        (cutoff_str,)
+    ).fetchall()
+    for customer_cid, tier, dop_str in expired:
+        try:
+            dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+        except Exception:
+            dop = datetime.now(IST) - timedelta(days=7)
+        expired_at = (dop + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+        c.execute(
+            "INSERT INTO membership_history (customer_cid, tier, dop, expired_at) VALUES (?,?,?,?)",
+            (customer_cid, tier, dop_str, expired_at)
+        )
+    c.execute("DELETE FROM memberships WHERE dop <= ?", (cutoff_str,))
     conn.commit()
     conn.close()
 
@@ -123,13 +146,23 @@ def remove_membership(cust):
 
 def get_membership(cust):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    row = conn.execute("SELECT tier, dop FROM memberships WHERE customer_cid = ?", (cust,)).fetchone()
+    row = conn.execute(
+        "SELECT tier, dop FROM memberships WHERE customer_cid = ?", (cust,)
+    ).fetchone()
     conn.close()
     return {"tier": row[0], "dop": row[1]} if row else None
 
 def get_all_memberships():
     conn = sqlite3.connect("auto_exotic_billing.db")
     rows = conn.execute("SELECT customer_cid, tier, dop FROM memberships").fetchall()
+    conn.close()
+    return rows
+
+def get_past_memberships():
+    conn = sqlite3.connect("auto_exotic_billing.db")
+    rows = conn.execute(
+        "SELECT customer_cid, tier, dop, expired_at FROM membership_history ORDER BY expired_at DESC"
+    ).fetchall()
     conn.close()
     return rows
 
@@ -148,7 +181,7 @@ def get_all_employee_cids():
 def get_billing_summary_by_cid(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
     summary, total = {}, 0.0
-    for bt in ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"]:
+    for bt in ["ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"]:
         amt = conn.execute(
             "SELECT SUM(total_amount) FROM bills WHERE employee_cid = ? AND billing_type = ?",
             (cid, bt)
@@ -194,7 +227,7 @@ def get_total_billing():
     conn.close()
     return total
 
-# ---------- AUTH -----------
+# ---------- AUTHENTICATION -----------
 def login(u, p):
     if u == "AutoExotic" and p == "AutoExotic123":
         st.session_state.logged_in, st.session_state.role, st.session_state.username = True, "admin", u
@@ -392,33 +425,44 @@ elif st.session_state.role == "admin":
         st.table(df_rank)
 
     elif choice == "Manage Memberships":
-        st.subheader("🎟️ Manage Memberships")
-        with st.form("admin_mem", clear_on_submit=True):
-            cm = st.text_input("Customer CID", key="admin_mem_cust")
-            tr = st.selectbox("Tier", ["Tier1", "Tier2", "Tier3", "Racer"], key="admin_mem_tier")
-            if st.form_submit_button("Add/Update Membership"):
-                if cm:
-                    add_membership(cm, tr)
+        st.subheader("🎟️ Memberships")
+        tab = st.radio("View", ["Active", "Past"], key="mem_view_tab")
 
-        st.markdown("**Current Memberships**")
-        mems = get_all_memberships()
-        if mems:
-            rows_mem = []
-            for cust, tier, dop_str in mems:
-                dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-                expiry = dop + timedelta(days=7)
-                rem = expiry - datetime.now(IST)
-                rows_mem.append({
-                    "Customer CID": cust,
-                    "Tier": tier,
-                    "DOP": dop.strftime("%Y-%m-%d %H:%M:%S") + " IST",
-                    "Expiry": expiry.strftime("%Y-%m-%d %H:%M:%S") + " IST",
-                    "Time Left": f"{rem.days}d {rem.seconds // 3600}h"
-                })
-            st.table(pd.DataFrame(rows_mem))
-            rm = st.selectbox("Remove membership for", [f"{r['Customer CID']} ({r['Tier']})" for r in rows_mem], key="rm_mem")
-            if st.button("Remove Membership", key="rm_btn"):
-                remove_membership(rm.split(" ")[0])
+        if tab == "Active":
+            with st.form("admin_mem", clear_on_submit=True):
+                cm = st.text_input("Customer CID", key="admin_mem_cust")
+                tr = st.selectbox("Tier", ["Tier1", "Tier2", "Tier3", "Racer"], key="admin_mem_tier")
+                if st.form_submit_button("Add/Update Membership"):
+                    if cm:
+                        add_membership(cm, tr)
+
+            st.markdown("**Current Memberships**")
+            mems = get_all_memberships()
+            if mems:
+                rows_mem = []
+                for cust, tier, dop_str in mems:
+                    dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                    expiry = dop + timedelta(days=7)
+                    rem = expiry - datetime.now(IST)
+                    rows_mem.append({
+                        "Customer CID": cust,
+                        "Tier": tier,
+                        "DOP": dop.strftime("%Y-%m-%d %H:%M:%S") + " IST",
+                        "Expiry": expiry.strftime("%Y-%m-%d %H:%M:%S") + " IST",
+                        "Time Left": f"{rem.days}d {rem.seconds // 3600}h"
+                    })
+                st.table(pd.DataFrame(rows_mem))
+                rm = st.selectbox("Remove membership for", [f"{r['Customer CID']} ({r['Tier']})" for r in rows_mem], key="rm_mem")
+                if st.button("Remove Membership", key="rm_btn"):
+                    remove_membership(rm.split(" ")[0])
+        else:
+            st.markdown("**Expired / Past Memberships**")
+            past = get_past_memberships()
+            if past:
+                df_past = pd.DataFrame(past, columns=["Customer CID", "Tier", "DOP", "Expired At"])
+                st.table(df_past)
+            else:
+                st.info("No past memberships recorded.")
 
     elif choice == "Employee Performance":
         st.subheader("📊 Employee Performance")
