@@ -336,7 +336,8 @@ if not st.session_state.logged_in:
     with st.form("login_form"):
         uname = st.text_input("Username", key="login_user")
         pwd   = st.text_input("Password", type="password", key="login_pass")
-        if st.form_submit_button("Login", key="login_btn"):
+        submit = st.form_submit_button("Login", key="login_btn")
+        if submit:
             login(uname, pwd)
     st.stop()
 
@@ -425,7 +426,8 @@ if st.session_state.role == "user":
                 total *= (1 - disc)
                 det += f" | {mem['tier']} discount {int(disc*100)}%"
 
-        if st.form_submit_button("💾 Save Bill", key="user_save_bill"):
+        submit = st.form_submit_button("💾 Save Bill", key="user_save_bill")
+        if submit:
             if not emp_cid or not cust_cid or total == 0:
                 st.warning("Fill all fields.")
             else:
@@ -438,14 +440,16 @@ if st.session_state.role == "user":
     with st.form("mem_form_user", clear_on_submit=True):
         m_cust = st.text_input("Customer CID", key="user_mem_cust")
         m_tier = st.selectbox("Tier", ["Tier1","Tier2","Tier3","Racer"], key="user_mem_tier")
-        if st.form_submit_button("Add/Update Membership", key="user_mem_save"):
+        submit = st.form_submit_button("Add/Update Membership", key="user_mem_save")
+        if submit:
             if m_cust:
                 add_membership(m_cust, m_tier)
                 st.success("Membership updated!")
 
     st.subheader("🔍 Check Membership")
     lookup = st.text_input("Customer CID to check", key="user_lookup")
-    if st.button("Check Membership", key="user_check_mem"):
+    check = st.button("Check Membership", key="user_check_mem")
+    if check:
         mem = get_membership(lookup)
         if mem:
             dop = datetime.strptime(mem["dop"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
@@ -505,7 +509,8 @@ elif st.session_state.role == "admin":
             with st.form("add_hood", clear_on_submit=True):
                 hname = st.text_input("Hood Name", key="add_hood_name")
                 hloc  = st.text_input("Location",  key="add_hood_loc")
-                if st.form_submit_button("Add Hood", key="add_hood_btn") and hname and hloc:
+                submit = st.form_submit_button("Add Hood", key="add_hood_btn")
+                if submit and hname and hloc:
                     add_hood(hname, hloc)
                     st.success(f"Added hood '{hname}'")
 
@@ -518,10 +523,12 @@ elif st.session_state.role == "admin":
                 old_loc  = dict(hds)[sel]
                 new_name = st.text_input("New Name", sel,       key="edit_hood_newname")
                 new_loc  = st.text_input("New Location", old_loc, key="edit_hood_newloc")
-                if st.button("Update Hood", key="edit_hood_update"):
+                update = st.button("Update Hood", key="edit_hood_update")
+                delete = st.button("Delete Hood", key="edit_hood_delete")
+                if update:
                     update_hood(sel, new_name, new_loc)
                     st.success("Hood updated.")
-                if st.button("Delete Hood", key="edit_hood_delete"):
+                if delete:
                     delete_hood(sel)
                     st.success("Hood deleted.")
             else:
@@ -543,7 +550,8 @@ elif st.session_state.role == "admin":
                     list(choices.keys()),
                     key="assign_emp_multiselect"
                 )
-                if st.button("Assign", key="assign_hood_btn"):
+                assign = st.button("Assign", key="assign_hood_btn")
+                if assign:
                     assign_employees_to_hood(
                         sel_hood, [choices[k] for k in sel_list]
                     )
@@ -581,7 +589,8 @@ elif st.session_state.role == "admin":
                 new_hood = st.selectbox(
                     "Hood", ["No Hood"] + hds, key="add_emp_hood"
                 )
-                if st.form_submit_button("Add Employee", key="add_emp_btn"):
+                submit = st.form_submit_button("Add Employee", key="add_emp_btn")
+                if submit:
                     if new_cid and new_name:
                         add_employee(new_cid, new_name, new_rank)
                         if new_hood != "No Hood":
@@ -599,7 +608,8 @@ elif st.session_state.role == "admin":
                 list(opts.keys()),
                 key="remove_emp_selectbox"
             )
-            if st.button("Delete Employee", key="remove_emp_btn"):
+            delete = st.button("Delete Employee", key="remove_emp_btn")
+            if delete:
                 delete_employee(opts[sel])
                 st.success(f"Removed {sel}")
 
@@ -632,7 +642,8 @@ elif st.session_state.role == "admin":
                               if details["hood"] in hds else 0,
                         key="edit_emp_hood"
                     )
-                    if st.form_submit_button("Update Employee", key="edit_emp_btn"):
+                    submit = st.form_submit_button("Update Employee", key="edit_emp_btn")
+                    if submit:
                         update_employee(
                             opts[sel_emp], name=name, rank=rank, hood=hood
                         )
@@ -781,7 +792,8 @@ elif st.session_state.role == "admin":
                 "Min sales amount (₹)", min_value=0.0, value=0.0,
                 key="tracking_filter_min"
             )
-            if st.button("Apply Filter", key="tracking_apply_filter"):
+            applyf = st.button("Apply Filter", key="tracking_apply_filter")
+            if applyf:
                 cutoff = datetime.now(IST) - timedelta(days=days)
                 results = []
                 conn = sqlite3.connect("auto_exotic_billing.db")
