@@ -641,33 +641,34 @@ elif st.session_state.role == "admin":
             st.table(pd.DataFrame(data))
 
         # Membership Tracking
+                with tabs[3]:
             st.subheader("📋 Memberships")
-        with tabs[3]:
-    view = st.radio("Show", ["Active", "Past"], horizontal=True)
+            view = st.radio("Show", ["Active", "Past"], horizontal=True)
 
-    if view == "Active":
-        rows = get_all_memberships()
-        data = []
-        for cid, tier, dop_str in rows:
-            dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-            expiry = dop + timedelta(days=7)
-            rem = expiry - datetime.now(IST)
-            data.append({
-                "Customer CID": cid,
-                "Tier": tier,
-                "Started On": dop.strftime("%Y-%m-%d %H:%M:%S"),
-                "Expires On": expiry.strftime("%Y-%m-%d %H:%M:%S"),
-                "Remaining": f"{rem.days}d {rem.seconds//3600}h"
-            })
-        st.table(pd.DataFrame(data))
-    else:  # Past
-        rows = get_past_memberships()
-        data = []
-        for cid, tier, dop_str, expired_str in rows:
-            data.append({
-                "Customer CID": cid,
-                "Tier": tier,
-                "Started On": dop_str,
-                "Expired At": expired_str
-            })
-        st.table(pd.DataFrame(data))
+            if view == "Active":
+                rows = get_all_memberships()
+                data = []
+                for cid, tier, dop_str in rows:
+                    dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                    expiry = dop + timedelta(days=7)
+                    rem = expiry - datetime.now(IST)
+                    data.append({
+                        "Customer CID": cid,
+                        "Tier": tier,
+                        "Started On": dop.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Expires On": expiry.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Remaining": f"{rem.days}d {rem.seconds//3600}h"
+                    })
+                st.table(pd.DataFrame(data))
+
+            else:  # Past
+                rows = get_past_memberships()
+                data = []
+                for cid, tier, dop_str, expired_str in rows:
+                    data.append({
+                        "Customer CID": cid,
+                        "Tier": tier,
+                        "Started On": dop_str,
+                        "Expired At": expired_str
+                    })
+                st.table(pd.DataFrame(data))
