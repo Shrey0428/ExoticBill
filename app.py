@@ -641,9 +641,8 @@ elif st.session_state.role == "admin":
             st.table(pd.DataFrame(data))
 
         # Membership Tracking
+            st.subheader("📋 Memberships")
         with tabs[3]:
-    
-    st.subheader("📋 Memberships")
     view = st.radio("Show", ["Active", "Past"], horizontal=True)
 
     if view == "Active":
