@@ -548,6 +548,21 @@ elif st.session_state.role == "admin":
             st.table(df_f.rename_axis("Date").reset_index())
             st.write("Trend")
             st.line_chart(df_time["daily_sales"])
+            
+st.markdown("---")
+st.subheader("🧹 Maintenance")
+
+# Confirm before destructive action
+confirm = st.checkbox(
+    "I understand this will erase all billing history", 
+    key="confirm_reset"
+)
+if confirm and st.button("⚠️ Reset All Billings"):
+    conn = sqlite3.connect("auto_exotic_billing.db")
+    conn.execute("DELETE FROM bills")
+    conn.commit()
+    conn.close()
+    st.success("✅ All billing records have been reset.")
 
     else:  # Employee Tracking
         days=st.number_input("Past days",1,365,7,key="track_days")
