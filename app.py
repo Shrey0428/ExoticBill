@@ -367,9 +367,6 @@ if st.session_state.role == "user":
             )
         else:
             st.info(f"No active membership for {lookup}")
-# app.py (Part 2 of 2)
-
-# ---------- ADMIN PANEL & MAIN MENU -----------
 elif st.session_state.role == "admin":
     st.title("👑 ExoticBill Admin")
     st.metric("💵 Total Revenue", f"₹{get_total_billing():,.2f}")
