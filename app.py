@@ -604,12 +604,34 @@ elif st.session_state.role == "admin":
         tabs = st.tabs(["Employee","Customer","Hood","Membership"])
 
         # Employee Tracking
-        with tabs[0]:
-            st.subheader("Employee Billing")
-            emp_opts = {f"{n} ({c})": c for c,n in get_all_employee_cids()}
-            sel = st.selectbox("Select Employee", list(emp_opts.keys()))
-            view = st.radio("View", ["Overall","Detailed"], horizontal=True)
-            cid = emp_opts[sel]
+       with tabs[0]:
+    st.subheader("Employee Billing")
+
+    # — filter by rank —
+    ranks = ["All"] + list(COMMISSION_RATES.keys())
+    sel_rank = st.selectbox("Filter by Rank", ranks)
+
+    # build filtered employee list
+    all_emps = get_all_employee_cids()
+    if sel_rank != "All":
+        all_emps = [(cid,name) for cid,name in all_emps if get_employee_rank(cid) == sel_rank]
+
+    emp_opts = {f"{name} ({cid})": cid for cid,name in all_emps}
+    sel = st.selectbox("Select Employee", list(emp_opts.keys()))
+
+    view = st.radio("View", ["Overall","Detailed"], horizontal=True)
+    cid = emp_opts[sel]
+
+    if view == "Overall":
+        summary, total = get_billing_summary_by_cid(cid)
+        for k,v in summary.items():
+            st.metric(k, f"₹{v:.2f}")
+        st.metric("Total", f"₹{total:.2f}")
+    else:
+        rows = get_employee_bills(cid)
+        df = pd.DataFrame(rows, columns=["ID","Customer","Type","Details","Amount","Time","Commission","Tax"])
+        st.dataframe(df)
+
             if view == "Overall":
                 summary, total = get_billing_summary_by_cid(cid)
                 for k,v in summary.items():
