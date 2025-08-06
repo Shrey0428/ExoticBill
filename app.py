@@ -677,7 +677,7 @@ elif st.session_state.role=="admin":
                                     conn.commit()
                                     conn.close()
                                     st.success(f"Deleted bill ID {bill_id}")
-                                    st.experimental_rerun()
+                                
                     else:
                         st.info("No bills found for this employee.")
 
