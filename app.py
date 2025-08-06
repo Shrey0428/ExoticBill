@@ -605,22 +605,22 @@ elif st.session_state.role == "admin":
 
         # Employee Tracking
        with tabs[0]:
-    st.subheader("Employee Billing")
-
-    # — filter by rank —
-    ranks = ["All"] + list(COMMISSION_RATES.keys())
-    sel_rank = st.selectbox("Filter by Rank", ranks)
-
-    # build filtered employee list
-    all_emps = get_all_employee_cids()
-    if sel_rank != "All":
-        all_emps = [(cid,name) for cid,name in all_emps if get_employee_rank(cid) == sel_rank]
-
-    emp_opts = {f"{name} ({cid})": cid for cid,name in all_emps}
-    sel = st.selectbox("Select Employee", list(emp_opts.keys()))
-
-    view = st.radio("View", ["Overall","Detailed"], horizontal=True)
-    cid = emp_opts[sel]
+            st.subheader("Employee Billing")
+        
+            # — filter by rank —
+            ranks = ["All"] + list(COMMISSION_RATES.keys())
+            sel_rank = st.selectbox("Filter by Rank", ranks)
+        
+            # build filtered employee list
+            all_emps = get_all_employee_cids()
+            if sel_rank != "All":
+                all_emps = [(cid,name) for cid,name in all_emps if get_employee_rank(cid) == sel_rank]
+        
+            emp_opts = {f"{name} ({cid})": cid for cid,name in all_emps}
+            sel = st.selectbox("Select Employee", list(emp_opts.keys()))
+        
+            view = st.radio("View", ["Overall","Detailed"], horizontal=True)
+            cid = emp_opts[sel]
 
     if view == "Overall":
         summary, total = get_billing_summary_by_cid(cid)
