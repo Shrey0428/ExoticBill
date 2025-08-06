@@ -369,7 +369,6 @@ if st.session_state.role == "user":
             st.info(f"No active membership for {lookup}")
 elif st.session_state.role == "admin":
     st.title("👑 ExoticBill Admin")
-    st.metric("💵 Total Revenue", f"₹{get_total_billing():,.2f}")
     st.markdown("---")
     st.subheader("🧹 Maintenance")
     confirm = st.checkbox(
