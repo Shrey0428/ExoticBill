@@ -30,9 +30,9 @@ ITEM_PRICES = {
 PART_COST = 125
 LABOR = 450
 MEMBERSHIP_DISCOUNTS = {
-    "Tier1": {"REPAIR": 0.20, "CUSTOMIZATION": 0.10},
-    "Tier2": {"REPAIR": 0.33, "CUSTOMIZATION": 0.20},
-    "Tier3": {"REPAIR": 0.50, "CUSTOMIZATION": 0.30},
+    "Tier1": {"REPAIR": 0.08, "CUSTOMIZATION": 0.08},
+    "Tier2": {"REPAIR": 0.12, "CUSTOMIZATION": 0.12},
+    "Tier3": {"REPAIR": 0.18, "CUSTOMIZATION": 0.18},
     "Racer": {"REPAIR": 0.00, "CUSTOMIZATION": 0.00},
 }
 
@@ -137,9 +137,15 @@ purge_expired_memberships()
 # ---------- DATABASE HELPERS -----------
 def save_bill(emp, cust, btype, det, amt):
     now_ist = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-    comm_rate = COMMISSION_RATES.get(get_employee_rank(emp), 0)
-    commission = amt * comm_rate
-    tax = commission * TAX_RATE
+
+    if btype in ["UPGRADES", "MEMBERSHIP"]:
+        commission = 0.0
+        tax = 0.0
+    else:
+        comm_rate = COMMISSION_RATES.get(get_employee_rank(emp), 0)
+        commission = amt * comm_rate
+        tax = commission * TAX_RATE
+
     conn = sqlite3.connect("auto_exotic_billing.db")
     conn.execute("""
         INSERT INTO bills
@@ -413,25 +419,35 @@ if st.session_state.role == "user":
 
     st.markdown("---")
     st.subheader("🎟️ Manage Membership")
-    with st.form("mem_form_user", clear_on_submit=True):
-        m_cust=st.text_input("Customer CID")
-        m_tier=st.selectbox("Tier", ["Tier1","Tier2","Tier3","Racer"])
-        if st.form_submit_button("Add/Update Membership"):
-            if m_cust:
-                add_membership(m_cust, m_tier)
-                st.success("Membership updated!")
+with st.form("mem_form_user", clear_on_submit=True):
+    m_cust = st.text_input("Customer CID")
+    m_tier = st.selectbox("Tier", ["Tier1", "Tier2", "Tier3", "Racer"])
+    seller_cid = st.text_input("Your CID (Seller)")
 
-    st.subheader("🔍 Check Membership")
-    lookup=st.text_input("Customer CID to check")
-    if st.button("Check Membership"):
-        mem=get_membership(lookup)
-        if mem:
-            dop=datetime.strptime(mem["dop"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-            expiry=dop+timedelta(days=7)
-            rem=expiry-datetime.now(IST)
-            st.info(f"{lookup}: {mem['tier']}, expires in {rem.days}d {rem.seconds//3600}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
+    submitted = st.form_submit_button("Add/Update Membership")
+    if submitted:
+        MEMBERSHIP_PRICES = {"Tier1": 2000, "Tier2": 4000, "Tier3": 6000}
+
+        if m_cust and m_tier in MEMBERSHIP_PRICES and seller_cid:
+            add_membership(m_cust, m_tier)
+            sale_amt = MEMBERSHIP_PRICES[m_tier]
+            save_bill(seller_cid, m_cust, "MEMBERSHIP", f"{m_tier} Membership", sale_amt)
+            st.success(f"{m_tier} membership updated and billed (₹{sale_amt})")
         else:
-            st.info(f"No active membership for {lookup}")
+            st.warning("Fill all fields correctly.")
+        
+st.subheader("🔍 Check Membership")
+lookup = st.text_input("Customer CID to check")
+if st.button("Check Membership"):
+    mem = get_membership(lookup)
+    if mem:
+        dop = datetime.strptime(mem["dop"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+        expiry = dop + timedelta(days=7)
+        rem = expiry - datetime.now(IST)
+        st.info(f"{lookup}: {mem['tier']}, expires in {rem.days}d {rem.seconds//3600}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
+    else:
+        st.info(f"No active membership for {lookup}")
+
 
 # ---------- ADMIN PANEL & MAIN MENU -----------
 elif st.session_state.role=="admin":
@@ -451,12 +467,9 @@ elif st.session_state.role=="admin":
     if menu=="Sales":
         st.header("💹 Sales Overview")
         total_sales=get_total_billing()
-        bill_count=get_bill_count()
-        avg_sale=total_sales/bill_count if bill_count else 0.0
         sum_comm,sum_tax=get_total_commission_and_tax()
         profit=total_sales-(sum_comm+sum_tax)
         st.metric("Total Sales", f"₹{total_sales:,.2f}")
-        st.metric("Average Sale",f"₹{avg_sale:,.2f}")
         st.metric("Total Commission Paid",f"₹{sum_comm:,.2f}")
         st.metric("Total Tax on Commission", f"₹{sum_tax:,.2f}")
         st.metric("Estimated Profit", f"₹{profit:,.2f}")
@@ -519,7 +532,13 @@ elif st.session_state.role=="admin":
 
     elif menu=="Manage Staff":
         st.header("👷 Manage Staff")
-        tabs=st.tabs(["➕ Add Employee","🗑️ Remove Employee","✏️ Edit Employee"])
+        tabs=st.tabs([
+    "➕ Add Employee",
+    "🗑️ Remove Employee",
+    "✏️ Edit Employee",
+    "📋 View All Employees"
+])
+
 
         with tabs[0]:
             st.subheader("➕ Add New Employee")
@@ -564,6 +583,24 @@ elif st.session_state.role=="admin":
                     if st.form_submit_button("Update Employee"):
                         update_employee(opts[sel_emp],name=name,rank=rank,hood=hood)
                         st.success(f"Updated {sel_emp}")
+        with tabs[3]:
+            st.subheader("📋 All Employees List")
+            all_rows = []
+            for cid, name in get_all_employee_cids():
+                details = get_employee_details(cid)
+                if details:
+                    all_rows.append({
+                        "CID": cid,
+                        "Name": name,
+                        "Rank": details["rank"],
+                        "Hood": details["hood"]
+                    })
+            if all_rows:
+                df = pd.DataFrame(all_rows)
+                st.dataframe(df)
+            else:
+                st.info("No employees found.")
+
 
     else:  # Tracking
         st.header("📊 Tracking")
