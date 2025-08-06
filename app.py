@@ -642,8 +642,33 @@ elif st.session_state.role == "admin":
 
         # Membership Tracking
         with tabs[3]:
-            st.subheader("Membership Stats")
-            active  = len(get_all_memberships())
-            expired = len(get_past_memberships())
-            st.metric("Active Memberships", active)
-            st.metric("Historical Expired", expired)
+    
+    st.subheader("📋 Memberships")
+    view = st.radio("Show", ["Active", "Past"], horizontal=True)
+
+    if view == "Active":
+        rows = get_all_memberships()
+        data = []
+        for cid, tier, dop_str in rows:
+            dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+            expiry = dop + timedelta(days=7)
+            rem = expiry - datetime.now(IST)
+            data.append({
+                "Customer CID": cid,
+                "Tier": tier,
+                "Started On": dop.strftime("%Y-%m-%d %H:%M:%S"),
+                "Expires On": expiry.strftime("%Y-%m-%d %H:%M:%S"),
+                "Remaining": f"{rem.days}d {rem.seconds//3600}h"
+            })
+        st.table(pd.DataFrame(data))
+    else:  # Past
+        rows = get_past_memberships()
+        data = []
+        for cid, tier, dop_str, expired_str in rows:
+            data.append({
+                "Customer CID": cid,
+                "Tier": tier,
+                "Started On": dop_str,
+                "Expired At": expired_str
+            })
+        st.table(pd.DataFrame(data))
