@@ -466,4 +466,338 @@ elif st.session_state.role == "admin":
     st.markdown("---")
     st.subheader("🧹 Maintenance")
     confirm = st.checkbox(
-        "I understand this will erase all
+        "I understand this will erase all billing history",
+        key="admin_confirm_reset"
+    )
+    if confirm and st.button("⚠️ Reset All Billings", key="admin_reset"):
+        conn = sqlite3.connect("auto_exotic_billing.db")
+        conn.execute("DELETE FROM bills")
+        conn.commit()
+        conn.close()
+        st.success("All billing records have been reset.")
+
+    menu = st.sidebar.selectbox(
+        "Main Menu",
+        ["Sales","Manage Hoods","Manage Staff","Tracking"],
+        index=0,
+        key="admin_main_menu"
+    )
+
+    if menu == "Sales":
+        st.header("💹 Sales Overview")
+        total_sales = get_total_billing()
+        bill_count  = get_bill_count()
+        avg_sale    = total_sales / bill_count if bill_count else 0.0
+        sum_comm, sum_tax = get_total_commission_and_tax()
+        profit      = total_sales - (sum_comm + sum_tax)
+        st.metric("Total Sales",             f"₹{total_sales:,.2f}")
+        st.metric("Average Sale",            f"₹{avg_sale:,.2f}")
+        st.metric("Total Commission Paid",   f"₹{sum_comm:,.2f}")
+        st.metric("Total Tax on Commission", f"₹{sum_tax:,.2f}")
+        st.metric("Estimated Profit",        f"₹{profit:,.2f}")
+
+    elif menu == "Manage Hoods":
+        st.header("🏙️ Manage Hoods")
+        tabs = st.tabs(["Add Hood","Edit Hood","Assign Staff","View Hoods"])
+
+        with tabs[0]:
+            st.subheader("➕ Add New Hood")
+            with st.form("add_hood", clear_on_submit=True):
+                hname = st.text_input("Hood Name", key="add_hood_name")
+                hloc  = st.text_input("Location",  key="add_hood_loc")
+                if st.form_submit_button("Add Hood", key="add_hood_btn") and hname and hloc:
+                    add_hood(hname, hloc)
+                    st.success(f"Added hood '{hname}'")
+
+        with tabs[1]:
+            st.subheader("✏️ Edit / Delete Hood")
+            hds = get_all_hoods()
+            if hds:
+                names    = [h[0] for h in hds]
+                sel      = st.selectbox("Select Hood", names, key="edit_hood_selectbox")
+                old_loc  = dict(hds)[sel]
+                new_name = st.text_input("New Name", sel,       key="edit_hood_newname")
+                new_loc  = st.text_input("New Location", old_loc, key="edit_hood_newloc")
+                if st.button("Update Hood", key="edit_hood_update"):
+                    update_hood(sel, new_name, new_loc)
+                    st.success("Hood updated.")
+                if st.button("Delete Hood", key="edit_hood_delete"):
+                    delete_hood(sel)
+                    st.success("Hood deleted.")
+            else:
+                st.info("No hoods defined yet.")
+
+        with tabs[2]:
+            st.subheader("👷 Assign Employees to Hood")
+            hds = get_all_hoods()
+            if hds:
+                hood_names = [h[0] for h in hds]
+                sel_hood   = st.selectbox(
+                    "Select Hood", hood_names,
+                    key="manage_hood_assign_selectbox"
+                )
+                all_emp = get_all_employee_cids()
+                choices = {f"{n} ({c})": c for c, n in all_emp}
+                sel_list = st.multiselect(
+                    "Select Employees to assign",
+                    list(choices.keys()),
+                    key="assign_emp_multiselect"
+                )
+                if st.button("Assign", key="assign_hood_btn"):
+                    assign_employees_to_hood(
+                        sel_hood, [choices[k] for k in sel_list]
+                    )
+                    st.success("Employees reassigned.")
+            else:
+                st.info("Define some hoods first.")
+
+        with tabs[3]:
+            st.subheader("🔍 View Hoods & Members")
+            hds = get_all_hoods()
+            if hds:
+                for name, loc in hds:
+                    with st.expander(f"{name} — {loc}"):
+                        emps = get_employees_by_hood(name)
+                        if emps:
+                            st.table(pd.DataFrame(emps, columns=["CID","Name"]))
+                        else:
+                            st.write("No employees assigned.")
+            else:
+                st.info("No hoods to view.")
+
+    elif menu == "Manage Staff":
+        st.header("👷 Manage Staff")
+        tabs = st.tabs(["➕ Add Employee","🗑️ Remove Employee","✏️ Edit Employee"])
+
+        with tabs[0]:
+            st.subheader("➕ Add New Employee")
+            with st.form("add_emp", clear_on_submit=True):
+                new_cid  = st.text_input("Employee CID", key="add_emp_cid")
+                new_name = st.text_input("Name",          key="add_emp_name")
+                new_rank = st.selectbox(
+                    "Rank", list(COMMISSION_RATES.keys()), key="add_emp_rank"
+                )
+                hds      = [h[0] for h in get_all_hoods()] or []
+                new_hood = st.selectbox(
+                    "Hood", ["No Hood"] + hds, key="add_emp_hood"
+                )
+                if st.form_submit_button("Add Employee", key="add_emp_btn"):
+                    if new_cid and new_name:
+                        add_employee(new_cid, new_name, new_rank)
+                        if new_hood != "No Hood":
+                            update_employee(new_cid, hood=new_hood)
+                        st.success(f"Added {new_name} ({new_cid})")
+                    else:
+                        st.warning("CID and Name required.")
+
+        with tabs[1]:
+            st.subheader("🗑️ Remove Employee")
+            all_emp = get_all_employee_cids()
+            opts    = {f"{n} ({c})": c for c, n in all_emp}
+            sel     = st.selectbox(
+                "Select Employee to Remove",
+                list(opts.keys()),
+                key="remove_emp_selectbox"
+            )
+            if st.button("Delete Employee", key="remove_emp_btn"):
+                delete_employee(opts[sel])
+                st.success(f"Removed {sel}")
+
+        with tabs[2]:
+            st.subheader("✏️ Edit Employee")
+            all_emp = get_all_employee_cids()
+            opts    = {f"{n} ({c})": c for c, n in all_emp}
+            sel_emp = st.selectbox(
+                "Select Employee",
+                list(opts.keys()),
+                key="edit_emp_selectbox"
+            )
+            details = get_employee_details(opts[sel_emp])
+            if details:
+                with st.form("edit_emp", clear_on_submit=True):
+                    name = st.text_input(
+                        "Name", details["name"], key="edit_emp_name"
+                    )
+                    rank = st.selectbox(
+                        "Rank",
+                        list(COMMISSION_RATES.keys()),
+                        index=list(COMMISSION_RATES.keys()).index(details["rank"]),
+                        key="edit_emp_rank"
+                    )
+                    hds  = [h[0] for h in get_all_hoods()] or []
+                    hood = st.selectbox(
+                        "Hood",
+                        ["No Hood"] + hds,
+                        index=(["No Hood"]+hds).index(details["hood"])
+                              if details["hood"] in hds else 0,
+                        key="edit_emp_hood"
+                    )
+                    if st.form_submit_button("Update Employee", key="edit_emp_btn"):
+                        update_employee(
+                            opts[sel_emp], name=name, rank=rank, hood=hood
+                        )
+                        st.success(f"Updated {sel_emp}")
+
+    else:  # Tracking
+        st.header("📊 Tracking")
+        tabs = st.tabs([
+            "Employee","Customer","Hood","Membership",
+            "Employee Rankings","Custom Filter"
+        ])
+
+        # Employee tab
+        with tabs[0]:
+            st.subheader("Employee Billing")
+            ranks    = ["All"] + list(COMMISSION_RATES.keys())
+            sel_rank = st.selectbox(
+                "Filter by Rank", ranks,
+                key="tracking_filter_rank"
+            )
+            all_emps = get_all_employee_cids()
+            if sel_rank != "All":
+                all_emps = [
+                    (cid, name) for cid, name in all_emps
+                    if get_employee_rank(cid) == sel_rank
+                ]
+            emp_keys = [f"{n} ({c})" for c, n in all_emps]
+            if not emp_keys:
+                st.info("No employees match that rank.")
+            else:
+                sel  = st.selectbox(
+                    "Select Employee", emp_keys,
+                    key="tracking_emp_selectbox"
+                )
+                view = st.radio(
+                    "View", ["Overall","Detailed"],
+                    horizontal=True,
+                    key="tracking_emp_view"
+                )
+                cid = dict(zip(emp_keys, [c for c, _ in all_emps]))[sel]
+                if view == "Overall":
+                    summary, total = get_billing_summary_by_cid(cid)
+                    for k, v in summary.items():
+                        st.metric(k, f"₹{v:.2f}")
+                    st.metric("Total", f"₹{total:.2f}")
+                else:
+                    df = pd.DataFrame(
+                        get_employee_bills(cid),
+                        columns=["ID","Customer","Type","Details","Amount","Time","Commission","Tax"]
+                    )
+                    st.dataframe(df)
+
+        # Customer tab
+        with tabs[1]:
+            st.subheader("Customer Billing History")
+            cust = st.selectbox(
+                "Select Customer", get_all_customers(),
+                key="tracking_cust_selectbox"
+            )
+            df = pd.DataFrame(
+                get_customer_bills(cust),
+                columns=["Employee","Type","Details","Amount","Time","Commission","Tax"]
+            )
+            st.dataframe(df)
+
+        # Hood tab
+        with tabs[2]:
+            st.subheader("Hood Summary")
+            hood_names = [h[0] for h in get_all_hoods()]
+            sel_hood   = st.selectbox(
+                "Select Hood", hood_names,
+                key="tracking_hood_selectbox"
+            )
+            rows = []
+            for cid, name in get_employees_by_hood(sel_hood):
+                _, tot = get_billing_summary_by_cid(cid)
+                rows.append({"CID": cid, "Name": name, "Total": tot})
+            st.table(pd.DataFrame(rows))
+
+        # Membership tab
+        with tabs[3]:
+            st.subheader("📋 Memberships")
+            view = st.radio(
+                "Show", ["Active","Past"],
+                horizontal=True,
+                key="tracking_mem_view"
+            )
+            if view == "Active":
+                rows = get_all_memberships()
+                data = []
+                for cid, tier, dop_str in rows:
+                    dop    = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                    expiry = dop + timedelta(days=7)
+                    rem    = expiry - datetime.now(IST)
+                    data.append({
+                        "Customer CID": cid,
+                        "Tier": tier,
+                        "Started On": dop.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Expires On": expiry.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Remaining": f"{rem.days}d {rem.seconds//3600}h"
+                    })
+                st.table(pd.DataFrame(data))
+            else:
+                rows = get_past_memberships()
+                data = []
+                for cid, tier, dop_str, expired_str in rows:
+                    data.append({
+                        "Customer CID": cid,
+                        "Tier": tier,
+                        "Started On": dop_str,
+                        "Expired At": expired_str
+                    })
+                st.table(pd.DataFrame(data))
+
+        # Employee Rankings tab
+        with tabs[4]:
+            st.subheader("🏆 Employee Rankings")
+            metric = st.selectbox(
+                "Select ranking metric",
+                ["Total Sales","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"],
+                key="tracking_rank_metric"
+            )
+            ranking = []
+            conn = sqlite3.connect("auto_exotic_billing.db")
+            for cid, name in get_all_employee_cids():
+                if metric == "Total Sales":
+                    q, params = "SELECT SUM(total_amount) FROM bills WHERE employee_cid=?", (cid,)
+                else:
+                    q = ("SELECT SUM(total_amount) FROM bills "
+                         "WHERE employee_cid=? AND billing_type=?")
+                    params = (cid, metric)
+                val = conn.execute(q, params).fetchone()[0] or 0.0
+                ranking.append({"Employee": f"{name} ({cid})", metric: val})
+            conn.close()
+            df_rank = pd.DataFrame(ranking).sort_values(by=metric, ascending=False)
+            st.table(df_rank.head(10))
+
+        # Custom Filter tab
+        with tabs[5]:
+            st.subheader("🔍 Custom Sales Filter")
+            days      = st.number_input(
+                "Last X days", min_value=1, max_value=30, value=7,
+                key="tracking_filter_days"
+            )
+            min_sales = st.number_input(
+                "Min sales amount (₹)", min_value=0.0, value=0.0,
+                key="tracking_filter_min"
+            )
+            if st.button("Apply Filter", key="tracking_apply_filter"):
+                cutoff = datetime.now(IST) - timedelta(days=days)
+                results = []
+                conn = sqlite3.connect("auto_exotic_billing.db")
+                for cid, name in get_all_employee_cids():
+                    q = ("SELECT SUM(total_amount) FROM bills "
+                         "WHERE employee_cid=? AND timestamp>=?")
+                    total = conn.execute(
+                        q, (cid, cutoff.strftime("%Y-%m-%d %H:%M:%S"))
+                    ).fetchone()[0] or 0.0
+                    if total >= min_sales:
+                        results.append({
+                            "Employee": f"{name} ({cid})",
+                            f"Sales in last {days}d": total
+                        })
+                conn.close()
+                if results:
+                    st.table(pd.DataFrame(results))
+                else:
+                    st.info("No employees match that filter.")
