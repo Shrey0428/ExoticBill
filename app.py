@@ -44,6 +44,7 @@ COMMISSION_RATES = {
     "Lead Upgrade Specialist": 0.20,
     "Stock Manager": 0.15,
     "Manager": 0.25,
+    "CEO": 0.69,
 }
 TAX_RATE = 0.05  # 5% on the commission
 
