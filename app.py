@@ -333,10 +333,10 @@ def login(u, p):
 
 if not st.session_state.logged_in:
     st.title("🧾 ExoticBill Login")
-    with st.form("login_form"):
+    with st.form("login_form", clear_on_submit=True):
         uname = st.text_input("Username", key="login_user")
         pwd   = st.text_input("Password", type="password", key="login_pass")
-        submit = st.form_submit_button("Login", key="login_btn")
+        submit = st.form_submit_button("Login", key="login_btn")  # <- This is crucial!
         if submit:
             login(uname, pwd)
     st.stop()
