@@ -692,8 +692,9 @@ elif st.session_state.role=="admin":
                         "Expired At":expired_str
                     })
                 st.table(pd.DataFrame(data))
-        st.markdown("---")
-        st.subheader("🗑️ Delete a Membership")
+                st.markdown("---")
+                st.subheader("🗑️ Delete a Membership")
+        
 
         mem_options = {f"{cid} ({tier})": cid for cid, tier, _ in rows}
         if mem_options:
