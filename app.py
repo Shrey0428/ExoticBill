@@ -25,6 +25,7 @@ ITEM_PRICES = {
     "Adv Lockpick": 400,
     "Lockpick": 250,
     "Wash Kit": 300,
+    "Harness": 12000,
 }
 PART_COST = 125
 LABOR = 450
