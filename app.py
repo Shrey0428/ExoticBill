@@ -138,7 +138,19 @@ purge_expired_memberships()
 def save_bill(emp, cust, btype, det, amt):
     now_ist = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
+    # Check for commission-free items or types
+    no_commission = False
+
     if btype in ["UPGRADES", "MEMBERSHIP"]:
+        no_commission = True
+    elif btype == "ITEMS":
+        no_commission_items = ["Harness", "NOS"]
+        # If any non-commission-free items are included, allow commission
+        item_names = [i.strip().split("×")[0] for i in det.split(",")]
+        if all(item in no_commission_items for item in item_names):
+            no_commission = True
+
+    if no_commission:
         commission = 0.0
         tax = 0.0
     else:
@@ -154,6 +166,7 @@ def save_bill(emp, cust, btype, det, amt):
     """, (emp, cust, btype, det, amt, now_ist, commission, tax))
     conn.commit()
     conn.close()
+
 
 def add_employee(cid, name, rank="Trainee"):
     conn = sqlite3.connect("auto_exotic_billing.db")
