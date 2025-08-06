@@ -491,7 +491,7 @@ elif st.session_state.role=="admin":
             hds=get_all_hoods()
             if hds:
                 hood_names=[h[0] for h in hds]
-                sel_hood=st.selectbox("Select Hood", hood_names)
+                sel_hood = st.selectbox("Select Hood", hood_names, key="select_hood")
                 all_emp=get_all_employee_cids()
                 choices={f"{n} ({c})":c for c,n in all_emp}
                 sel_list=st.multiselect("Select Employees to assign", list(choices.keys()))
