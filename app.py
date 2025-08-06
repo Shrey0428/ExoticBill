@@ -665,49 +665,54 @@ elif st.session_state.role=="admin":
         # Membership tab
         with tabs[3]:
             st.subheader("📋 Memberships")
-            view=st.radio("Show",["Active","Past"],horizontal=True)
-            if view=="Active":
-                rows=get_all_memberships()
-                data=[]
-                for cid,tier,dop_str in rows:
-                    dop=datetime.strptime(dop_str,"%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-                    expiry=dop+timedelta(days=7)
-                    rem=expiry-datetime.now(IST)
+            view = st.radio("Show", ["Active", "Past"], horizontal=True)
+
+            if view == "Active":
+                rows = get_all_memberships()
+                data = []
+                for cid, tier, dop_str in rows:
+                    dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                    expiry = dop + timedelta(days=7)
+                    rem = expiry - datetime.now(IST)
                     data.append({
-                        "Customer CID":cid,
-                        "Tier":tier,
-                        "Started On":dop.strftime("%Y-%m-%d %H:%M:%S"),
-                        "Expires On":expiry.strftime("%Y-%m-%d %H:%M:%S"),
-                        "Remaining":f"{rem.days}d {rem.seconds//3600}h"
+                        "Customer CID": cid,
+                        "Tier": tier,
+                        "Started On": dop.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Expires On": expiry.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Remaining": f"{rem.days}d {rem.seconds // 3600}h"
                     })
+
                 st.table(pd.DataFrame(data))
-            else:
-                rows=get_past_memberships()
-                data=[]
-                for cid,tier,dop_str,expired_str in rows:
-                    data.append({
-                        "Customer CID":cid,
-                        "Tier":tier,
-                        "Started On":dop_str,
-                        "Expired At":expired_str
-                    })
-                st.table(pd.DataFrame(data))
+
                 st.markdown("---")
                 st.subheader("🗑️ Delete a Membership")
-        
 
-        mem_options = {f"{cid} ({tier})": cid for cid, tier, _ in rows}
-        if mem_options:
-            sel_mem = st.selectbox("Select membership to delete", list(mem_options.keys()))
-            if st.button("Delete Selected Membership"):
-                cid_to_delete = mem_options[sel_mem]
-                conn = sqlite3.connect("auto_exotic_billing.db")
-                conn.execute("DELETE FROM memberships WHERE customer_cid = ?", (cid_to_delete,))
-                conn.commit()
-                conn.close()
-                st.success(f"Deleted membership for {cid_to_delete}.")
-        else:
-            st.info("No active memberships found.")
+                mem_options = {f"{cid} ({tier})": cid for cid, tier, _ in rows}
+                if mem_options:
+                    sel_mem = st.selectbox("Select membership to delete", list(mem_options.keys()))
+                    if st.button("Delete Selected Membership"):
+                        cid_to_delete = mem_options[sel_mem]
+                        conn = sqlite3.connect("auto_exotic_billing.db")
+                        conn.execute("DELETE FROM memberships WHERE customer_cid = ?", (cid_to_delete,))
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Deleted membership for {cid_to_delete}.")
+                else:
+                    st.info("No active memberships found.")
+
+            else:
+                rows = get_past_memberships()
+                data = []
+                for cid, tier, dop_str, expired_str in rows:
+                    data.append({
+                        "Customer CID": cid,
+                        "Tier": tier,
+                        "Started On": dop_str,
+                        "Expired At": expired_str
+                    })
+                st.table(pd.DataFrame(data))
+
+
          
 
         # Employee Rankings tab
