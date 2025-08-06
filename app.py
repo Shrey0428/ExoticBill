@@ -663,3 +663,57 @@ elif st.session_state.role == "admin":
                         "Expired At": expired_str
                     })
                 st.table(pd.DataFrame(data))
+
+# ---------- Employee Rankings ----------
+        with tabs[4]:
+            st.subheader("🏆 Employee Rankings")
+            metric = st.selectbox(
+                "Select ranking metric",
+                ["Total Sales", "ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"]
+            )
+        
+            # build a list of (name, cid, value)
+            ranking = []
+            for cid, name in get_all_employee_cids():
+                # choose SQL filter based on metric
+                if metric == "Total Sales":
+                    q = "SELECT SUM(total_amount) FROM bills WHERE employee_cid=?"
+                    params = (cid,)
+                else:
+                    q = ("SELECT SUM(total_amount) "
+                         "FROM bills WHERE employee_cid=? AND billing_type=?")
+                    params = (cid, metric)
+                conn = sqlite3.connect("auto_exotic_billing.db")
+                val = conn.execute(q, params).fetchone()[0] or 0.0
+                conn.close()
+                ranking.append({"Employee": f"{name} ({cid})", metric: val})
+        
+            # sort descending and show top 10
+            df_rank = pd.DataFrame(ranking).sort_values(by=metric, ascending=False)
+            st.table(df_rank.head(10))
+
+# ---------- Custom Employee Filter ----------
+        with tabs[5]:
+            st.subheader("🔍 Custom Sales Filter")
+            days       = st.number_input("Last X days", min_value=1, max_value=30, value=7)
+            min_sales  = st.number_input("Min sales amount (₹)", min_value=0.0, value=0.0)
+            if st.button("Apply Filter"):
+                cutoff = datetime.now(IST) - timedelta(days=days)
+                results = []
+                conn = sqlite3.connect("auto_exotic_billing.db")
+                for cid, name in get_all_employee_cids():
+                    q = ("SELECT SUM(total_amount) FROM bills "
+                         "WHERE employee_cid=? AND timestamp>=?")
+                    total = conn.execute(q, (cid, cutoff.strftime("%Y-%m-%d %H:%M:%S"))).fetchone()[0] or 0.0
+                    if total >= min_sales:
+                        results.append({
+                            "Employee": f"{name} ({cid})",
+                            f"Sales in last {days}d": total
+                        })
+                conn.close()
+                if results:
+                    st.table(pd.DataFrame(results))
+                else:
+                    st.info("No employees match that filter.")
+
+
