@@ -368,85 +368,94 @@ with st.sidebar:
 # ---------- USER PANEL -----------
 if st.session_state.role == "user":
     st.title("🧾 ExoticBill - Add New Bill")
+
     if st.session_state.bill_saved:
         st.success(f"Bill saved! Total: ₹{st.session_state.bill_total:.2f}")
         st.session_state.bill_saved = False
 
-    btype = st.selectbox("Select Billing Type", ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"])
-    rtype = st.radio("Repair Type", ["Normal Repair","Advanced Repair"]) if btype=="REPAIR" else None
+    btype = st.selectbox("Select Billing Type", ["ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"])
+    rtype = st.radio("Repair Type", ["Normal Repair", "Advanced Repair"]) if btype == "REPAIR" else None
 
     with st.form("bill_form", clear_on_submit=True):
         emp_cid = st.text_input("Your CID (Employee)")
-        cust_cid= st.text_input("Customer CID")
-        total, det= 0.0, ""
+        cust_cid = st.text_input("Customer CID")
+        total, det = 0.0, ""
 
-        if btype=="ITEMS":
-            sel={}
-            for item,price in ITEM_PRICES.items():
-                q=st.number_input(f"{item} (₹{price}) – Qty", min_value=0, step=1, key=item)
-                if q: sel[item]=q; total+=price*q
-            det=", ".join(f"{i}×{q}" for i,q in sel.items())
+        if btype == "ITEMS":
+            sel = {}
+            for item, price in ITEM_PRICES.items():
+                q = st.number_input(f"{item} (₹{price}) – Qty", min_value=0, step=1, key=item)
+                if q:
+                    sel[item] = q
+                    total += price * q
+            det = ", ".join(f"{i}×{q}" for i, q in sel.items())
 
-        elif btype=="UPGRADES":
-            amt=st.number_input("Base upgrade amount (₹)", min_value=0.0)
-            total=amt*1.5; det=f"Upgrade: ₹{amt}"
+        elif btype == "UPGRADES":
+            amt = st.number_input("Base upgrade amount (₹)", min_value=0.0)
+            total = amt * 1.5
+            det = f"Upgrade: ₹{amt}"
 
-        elif btype=="REPAIR":
-            if rtype=="Normal Repair":
-                b=st.number_input("Base repair charge (₹)", min_value=0.0)
-                total=b+LABOR; det=f"Normal Repair: ₹{b}+₹{LABOR}"
+        elif btype == "REPAIR":
+            if rtype == "Normal Repair":
+                b = st.number_input("Base repair charge (₹)", min_value=0.0)
+                total = b + LABOR
+                det = f"Normal Repair: ₹{b}+₹{LABOR}"
             else:
-                p=st.number_input("Number of parts repaired", min_value=0, step=1)
-                total=p*PART_COST; det=f"Advanced Repair: {p}×₹{PART_COST}"
-        else:
-            c_amt=st.number_input("Base customization amount (₹)", min_value=0.0)
-            total=c_amt*2; det=f"Customization: ₹{c_amt}×2"
+                p = st.number_input("Number of parts repaired", min_value=0, step=1)
+                total = p * PART_COST
+                det = f"Advanced Repair: {p}×₹{PART_COST}"
+
+        else:  # CUSTOMIZATION
+            c_amt = st.number_input("Base customization amount (₹)", min_value=0.0)
+            total = c_amt * 2
+            det = f"Customization: ₹{c_amt}×2"
 
         mem = get_membership(cust_cid)
         if mem:
-            disc = MEMBERSHIP_DISCOUNTS.get(mem["tier"],{}).get(btype,0)
-            if disc>0:
-                total*=(1-disc)
-                det+=f" | {mem['tier']} discount {int(disc*100)}%"
+            disc = MEMBERSHIP_DISCOUNTS.get(mem["tier"], {}).get(btype, 0)
+            if disc > 0:
+                total *= (1 - disc)
+                det += f" | {mem['tier']} discount {int(disc * 100)}%"
 
         if st.form_submit_button("💾 Save Bill"):
-            if not emp_cid or not cust_cid or total==0:
+            if not emp_cid or not cust_cid or total == 0:
                 st.warning("Fill all fields.")
             else:
                 save_bill(emp_cid, cust_cid, btype, det, total)
-                st.session_state.bill_saved=True
-                st.session_state.bill_total=total
+                st.session_state.bill_saved = True
+                st.session_state.bill_total = total
 
+    # MEMBERSHIP FORM (only for user)
     st.markdown("---")
     st.subheader("🎟️ Manage Membership")
-with st.form("mem_form_user", clear_on_submit=True):
-    m_cust = st.text_input("Customer CID")
-    m_tier = st.selectbox("Tier", ["Tier1", "Tier2", "Tier3", "Racer"])
-    seller_cid = st.text_input("Your CID (Seller)")
+    with st.form("mem_form_user", clear_on_submit=True):
+        m_cust = st.text_input("Customer CID")
+        m_tier = st.selectbox("Tier", ["Tier1", "Tier2", "Tier3", "Racer"])
+        seller_cid = st.text_input("Your CID (Seller)")
 
-    submitted = st.form_submit_button("Add/Update Membership")
-    if submitted:
-        MEMBERSHIP_PRICES = {"Tier1": 2000, "Tier2": 4000, "Tier3": 6000}
+        submitted = st.form_submit_button("Add/Update Membership")
+        if submitted:
+            MEMBERSHIP_PRICES = {"Tier1": 2000, "Tier2": 4000, "Tier3": 6000}
+            if m_cust and m_tier in MEMBERSHIP_PRICES and seller_cid:
+                add_membership(m_cust, m_tier)
+                sale_amt = MEMBERSHIP_PRICES[m_tier]
+                save_bill(seller_cid, m_cust, "MEMBERSHIP", f"{m_tier} Membership", sale_amt)
+                st.success(f"{m_tier} membership updated and billed (₹{sale_amt})")
+            else:
+                st.warning("Fill all fields correctly.")
 
-        if m_cust and m_tier in MEMBERSHIP_PRICES and seller_cid:
-            add_membership(m_cust, m_tier)
-            sale_amt = MEMBERSHIP_PRICES[m_tier]
-            save_bill(seller_cid, m_cust, "MEMBERSHIP", f"{m_tier} Membership", sale_amt)
-            st.success(f"{m_tier} membership updated and billed (₹{sale_amt})")
+    # MEMBERSHIP CHECKER
+    st.subheader("🔍 Check Membership")
+    lookup = st.text_input("Customer CID to check")
+    if st.button("Check Membership"):
+        mem = get_membership(lookup)
+        if mem:
+            dop = datetime.strptime(mem["dop"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+            expiry = dop + timedelta(days=7)
+            rem = expiry - datetime.now(IST)
+            st.info(f"{lookup}: {mem['tier']}, expires in {rem.days}d {rem.seconds // 3600}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
         else:
-            st.warning("Fill all fields correctly.")
-        
-st.subheader("🔍 Check Membership")
-lookup = st.text_input("Customer CID to check")
-if st.button("Check Membership"):
-    mem = get_membership(lookup)
-    if mem:
-        dop = datetime.strptime(mem["dop"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-        expiry = dop + timedelta(days=7)
-        rem = expiry - datetime.now(IST)
-        st.info(f"{lookup}: {mem['tier']}, expires in {rem.days}d {rem.seconds//3600}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
-    else:
-        st.info(f"No active membership for {lookup}")
+            st.info(f"No active membership for {lookup}")
 
 
 # ---------- ADMIN PANEL & MAIN MENU -----------
