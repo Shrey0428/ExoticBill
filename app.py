@@ -243,7 +243,7 @@ def get_past_memberships():
 def get_billing_summary_by_cid(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
     summary, total = {}, 0.0
-    for bt in ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"]:
+    for bt in ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION","MEMBERSHIPS"]:
         amt = conn.execute(
             "SELECT SUM(total_amount) FROM bills WHERE employee_cid=? AND billing_type=?",
             (cid, bt)
@@ -692,12 +692,28 @@ elif st.session_state.role=="admin":
                         "Expired At":expired_str
                     })
                 st.table(pd.DataFrame(data))
+        st.markdown("---")
+        st.subheader("🗑️ Delete a Membership")
+
+        mem_options = {f"{cid} ({tier})": cid for cid, tier, _ in rows}
+        if mem_options:
+            sel_mem = st.selectbox("Select membership to delete", list(mem_options.keys()))
+            if st.button("Delete Selected Membership"):
+                cid_to_delete = mem_options[sel_mem]
+                conn = sqlite3.connect("auto_exotic_billing.db")
+                conn.execute("DELETE FROM memberships WHERE customer_cid = ?", (cid_to_delete,))
+                conn.commit()
+                conn.close()
+                st.success(f"Deleted membership for {cid_to_delete}.")
+        else:
+            st.info("No active memberships found.")
+         
 
         # Employee Rankings tab
         with tabs[4]:
             st.subheader("🏆 Employee Rankings")
             metric=st.selectbox("Select ranking metric",
-                                ["Total Sales","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"])
+                                ["Total Sales","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION","MEMBERSHIPS"])
             ranking=[]
             conn=sqlite3.connect("auto_exotic_billing.db")
             for cid,name in get_all_employee_cids():
