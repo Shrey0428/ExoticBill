@@ -621,27 +621,53 @@ elif st.session_state.role=="admin":
         # Employee tab
         with tabs[0]:
             st.subheader("Employee Billing")
-            ranks=["All"]+list(COMMISSION_RATES.keys())
-            sel_rank=st.selectbox("Filter by Rank", ranks)
-            all_emps=get_all_employee_cids()
-            if sel_rank!="All":
-                all_emps=[(cid,name) for cid,name in all_emps if get_employee_rank(cid)==sel_rank]
-            emp_keys=[f"{n} ({c})" for c,n in all_emps]
+            ranks = ["All"] + list(COMMISSION_RATES.keys())
+            sel_rank = st.selectbox("Filter by Rank", ranks)
+
+            all_emps = get_all_employee_cids()
+            if sel_rank != "All":
+                all_emps = [(cid, name) for cid, name in all_emps if get_employee_rank(cid) == sel_rank]
+
+            emp_keys = [f"{n} ({c})" for c, n in all_emps]
             if not emp_keys:
                 st.info("No employees match that rank.")
             else:
-                sel=st.selectbox("Select Employee", emp_keys)
-                view=st.radio("View",["Overall","Detailed"],horizontal=True)
-                cid=dict(zip(emp_keys,[c for c,_ in all_emps]))[sel]
-                if view=="Overall":
-                    summary,total=get_billing_summary_by_cid(cid)
-                    for k,v in summary.items():
-                        st.metric(k,f"₹{v:.2f}")
-                    st.metric("Total",f"₹{total:.2f}")
+                sel = st.selectbox("Select Employee", emp_keys)
+                view = st.radio("View", ["Overall", "Detailed"], horizontal=True)
+                cid = dict(zip(emp_keys, [c for c, _ in all_emps]))[sel]
+
+                if view == "Overall":
+                    summary, total = get_billing_summary_by_cid(cid)
+                    for k, v in summary.items():
+                        st.metric(k, f"₹{v:.2f}")
+                    st.metric("Total", f"₹{total:.2f}")
+
                 else:
-                    df=pd.DataFrame(get_employee_bills(cid),
-                                    columns=["ID","Customer","Type","Details","Amount","Time","Commission","Tax"])
-                    st.dataframe(df)
+                    bills = get_employee_bills(cid)
+
+                    if bills:
+                        st.subheader("📋 Bill Entries")
+                        for bill in bills:
+                            bill_id, cust, btype, details, amt, ts, comm, tax = bill
+                            col1, col2 = st.columns([9, 1])
+                            with col1:
+                                st.markdown(
+                                    f"**ID:** `{bill_id}` | **Customer:** `{cust}` | **Type:** `{btype}`  \n"
+                                    f"**Details:** {details}  \n"
+                                    f"**Amount:** ₹{amt:.2f} | **Commission:** ₹{comm:.2f} | **Tax:** ₹{tax:.2f}  \n"
+                                    f"🕒 {ts}"
+                                )
+                            with col2:
+                                if st.button("🗑️", key=f"del_{bill_id}"):
+                                    conn = sqlite3.connect("auto_exotic_billing.db")
+                                    conn.execute("DELETE FROM bills WHERE id = ?", (bill_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success(f"Deleted bill ID {bill_id}")
+                                    st.experimental_rerun()
+                    else:
+                        st.info("No bills found for this employee.")
+
 
         # Customer tab
         with tabs[1]:
