@@ -442,9 +442,9 @@ if st.session_state.role == "user":
     st.markdown("---")
     st.subheader("🎟️ Manage Membership")
     with st.form("mem_form_user", clear_on_submit=True):
-        m_cust = st.text_input("Customer CID")
+        seller_cid = st.text_input("Employee CID (Seller)")
         m_tier = st.selectbox("Tier", ["Tier1", "Tier2", "Tier3", "Racer"])
-        seller_cid = st.text_input("Your CID (Seller)")
+        m_cust = st.text_input("Customer CID")
 
         submitted = st.form_submit_button("Add/Update Membership")
         if submitted:
