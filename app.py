@@ -30,11 +30,14 @@ ITEM_PRICES = {
 PART_COST = 125
 LABOR = 450
 MEMBERSHIP_DISCOUNTS = {
-    "Tier1": {"REPAIR": 0.08, "CUSTOMIZATION": 0.08},
-    "Tier2": {"REPAIR": 0.12, "CUSTOMIZATION": 0.12},
-    "Tier3": {"REPAIR": 0.18, "CUSTOMIZATION": 0.18},
+    "Tier1": {"REPAIR": 0.20, "CUSTOMIZATION": 0.10},
+    "Tier2": {"REPAIR": 0.33, "CUSTOMIZATION": 0.20},
+    "Tier3": {"REPAIR": 0.50, "CUSTOMIZATION": 0.30},
     "Racer": {"REPAIR": 0.00, "CUSTOMIZATION": 0.00},
 }
+
+# ---------- MEMBERSHIP PRICES -----------
+MEMBERSHIP_PRICES = {"Tier1": 2000, "Tier2": 4000, "Tier3": 6000}
 
 # ---------- COMMISSION & TAX -----------
 COMMISSION_RATES = {
@@ -76,7 +79,7 @@ def init_db():
         hood TEXT DEFAULT 'No Hood'
       )
     """)
-    # memberships
+    # memberships (active)
     c.execute("""
       CREATE TABLE IF NOT EXISTS memberships (
         customer_cid TEXT PRIMARY KEY,
@@ -84,7 +87,7 @@ def init_db():
         dop TEXT
       )
     """)
-    # membership history
+    # membership history (archived/expired)
     c.execute("""
       CREATE TABLE IF NOT EXISTS membership_history (
         customer_cid TEXT,
@@ -120,7 +123,7 @@ def purge_expired_memberships():
     for cid, tier, dop_str in expired:
         try:
             dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-        except:
+        except Exception:
             dop = cutoff_dt
         expired_at = (dop + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
         c.execute(
@@ -135,19 +138,32 @@ def purge_expired_memberships():
 purge_expired_memberships()
 
 # ---------- DATABASE HELPERS -----------
+def get_employee_rank(cid):
+    conn = sqlite3.connect("auto_exotic_billing.db")
+    row = conn.execute("SELECT rank FROM employees WHERE cid = ?", (cid,)).fetchone()
+    conn.close()
+    return row[0] if row else "Trainee"
+
 def save_bill(emp, cust, btype, det, amt):
     now_ist = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
-    # Check for commission-free items or types
+    # Commission rules:
+    # - No commission/tax on UPGRADES and MEMBERSHIP
+    # - No commission/tax on ITEMS if ONLY Harness or ONLY NOS are present
     no_commission = False
-
     if btype in ["UPGRADES", "MEMBERSHIP"]:
         no_commission = True
     elif btype == "ITEMS":
-        no_commission_items = ["Harness", "NOS"]
-        # If any non-commission-free items are included, allow commission
-        item_names = [i.strip().split("×")[0] for i in det.split(",")]
-        if all(item in no_commission_items for item in item_names):
+        no_commission_items = {"Harness", "NOS"}
+        # parse item names from "Item×Qty, Item×Qty"
+        item_names = []
+        if det:
+            try:
+                item_names = [i.strip().split("×")[0] for i in det.split(",") if i.strip()]
+            except Exception:
+                item_names = []
+        # If there are items and all are in the no-commission set:
+        if item_names and all(name in no_commission_items for name in item_names):
             no_commission = True
 
     if no_commission:
@@ -166,7 +182,6 @@ def save_bill(emp, cust, btype, det, amt):
     """, (emp, cust, btype, det, amt, now_ist, commission, tax))
     conn.commit()
     conn.close()
-
 
 def add_employee(cid, name, rank="Trainee"):
     conn = sqlite3.connect("auto_exotic_billing.db")
@@ -196,12 +211,6 @@ def update_employee(cid, name=None, rank=None, hood=None):
         conn.execute("UPDATE employees SET hood = ? WHERE cid = ?", (hood, cid))
     conn.commit()
     conn.close()
-
-def get_employee_rank(cid):
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    row = conn.execute("SELECT rank FROM employees WHERE cid = ?", (cid,)).fetchone()
-    conn.close()
-    return row[0] if row else "Trainee"
 
 def get_employee_details(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
@@ -255,14 +264,18 @@ def get_past_memberships():
 
 def get_billing_summary_by_cid(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    summary, total = {}, 0.0
-    for bt in ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION","MEMBERSHIPS"]:
+    summary = {}
+    # Include MEMBERSHIP so it rolls up into totals/rankings
+    for bt in ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION","MEMBERSHIP"]:
         amt = conn.execute(
             "SELECT SUM(total_amount) FROM bills WHERE employee_cid=? AND billing_type=?",
             (cid, bt)
         ).fetchone()[0] or 0.0
         summary[bt] = amt
-        total += amt
+    total = conn.execute(
+        "SELECT SUM(total_amount) FROM bills WHERE employee_cid=?",
+        (cid,)
+    ).fetchone()[0] or 0.0
     conn.close()
     return summary, total
 
@@ -272,6 +285,7 @@ def get_employee_bills(cid):
         SELECT id, customer_cid, billing_type, details,
                total_amount, timestamp, commission, tax
         FROM bills WHERE employee_cid=?
+        ORDER BY timestamp DESC
     """, (cid,)).fetchall()
     conn.close()
     return rows
@@ -288,6 +302,7 @@ def get_customer_bills(cid):
         SELECT employee_cid, billing_type, details,
                total_amount, timestamp, commission, tax
         FROM bills WHERE customer_cid=?
+        ORDER BY timestamp DESC
     """, (cid,)).fetchall()
     conn.close()
     return rows
@@ -377,99 +392,93 @@ with st.sidebar:
     st.success(f"Logged in as: {st.session_state.username}")
     if st.button("Logout"):
         st.session_state.clear()
+        st.rerun()
 
 # ---------- USER PANEL -----------
 if st.session_state.role == "user":
     st.title("🧾 ExoticBill - Add New Bill")
-
     if st.session_state.bill_saved:
         st.success(f"Bill saved! Total: ₹{st.session_state.bill_total:.2f}")
         st.session_state.bill_saved = False
 
-    btype = st.selectbox("Select Billing Type", ["ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION"])
-    rtype = st.radio("Repair Type", ["Normal Repair", "Advanced Repair"]) if btype == "REPAIR" else None
+    btype = st.selectbox("Select Billing Type", ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION"])
+    rtype = st.radio("Repair Type", ["Normal Repair","Advanced Repair"]) if btype=="REPAIR" else None
 
     with st.form("bill_form", clear_on_submit=True):
         emp_cid = st.text_input("Your CID (Employee)")
-        cust_cid = st.text_input("Customer CID")
-        total, det = 0.0, ""
+        cust_cid= st.text_input("Customer CID")
+        total, det= 0.0, ""
 
-        if btype == "ITEMS":
-            sel = {}
-            for item, price in ITEM_PRICES.items():
-                q = st.number_input(f"{item} (₹{price}) – Qty", min_value=0, step=1, key=item)
-                if q:
-                    sel[item] = q
-                    total += price * q
-            det = ", ".join(f"{i}×{q}" for i, q in sel.items())
+        if btype=="ITEMS":
+            sel={}
+            for item,price in ITEM_PRICES.items():
+                q=st.number_input(f"{item} (₹{price}) – Qty", min_value=0, step=1, key=f"user_items_{item}")
+                if q: sel[item]=q; total+=price*q
+            det=", ".join(f"{i}×{q}" for i,q in sel.items())
 
-        elif btype == "UPGRADES":
-            amt = st.number_input("Base upgrade amount (₹)", min_value=0.0)
-            total = amt * 1.5
-            det = f"Upgrade: ₹{amt}"
+        elif btype=="UPGRADES":
+            amt=st.number_input("Base upgrade amount (₹)", min_value=0.0, key="user_upg_amt")
+            total=amt*1.5; det=f"Upgrade: ₹{amt}"
 
-        elif btype == "REPAIR":
-            if rtype == "Normal Repair":
-                b = st.number_input("Base repair charge (₹)", min_value=0.0)
-                total = b + LABOR
-                det = f"Normal Repair: ₹{b}+₹{LABOR}"
+        elif btype=="REPAIR":
+            if rtype=="Normal Repair":
+                b=st.number_input("Base repair charge (₹)", min_value=0.0, key="user_rep_base")
+                total=b+LABOR; det=f"Normal Repair: ₹{b}+₹{LABOR}"
             else:
-                p = st.number_input("Number of parts repaired", min_value=0, step=1)
-                total = p * PART_COST
-                det = f"Advanced Repair: {p}×₹{PART_COST}"
-
-        else:  # CUSTOMIZATION
-            c_amt = st.number_input("Base customization amount (₹)", min_value=0.0)
-            total = c_amt * 2
-            det = f"Customization: ₹{c_amt}×2"
+                p=st.number_input("Number of parts repaired", min_value=0, step=1, key="user_rep_parts")
+                total=p*PART_COST; det=f"Advanced Repair: {p}×₹{PART_COST}"
+        else:
+            c_amt=st.number_input("Base customization amount (₹)", min_value=0.0, key="user_cust_amt")
+            total=c_amt*2; det=f"Customization: ₹{c_amt}×2"
 
         mem = get_membership(cust_cid)
         if mem:
-            disc = MEMBERSHIP_DISCOUNTS.get(mem["tier"], {}).get(btype, 0)
-            if disc > 0:
-                total *= (1 - disc)
-                det += f" | {mem['tier']} discount {int(disc * 100)}%"
+            disc = MEMBERSHIP_DISCOUNTS.get(mem["tier"],{}).get(btype,0)
+            if disc>0:
+                total*=(1-disc)
+                det+=f" | {mem['tier']} discount {int(disc*100)}%"
 
         if st.form_submit_button("💾 Save Bill"):
-            if not emp_cid or not cust_cid or total == 0:
+            if not emp_cid or not cust_cid or total==0:
                 st.warning("Fill all fields.")
             else:
                 save_bill(emp_cid, cust_cid, btype, det, total)
-                st.session_state.bill_saved = True
-                st.session_state.bill_total = total
+                st.session_state.bill_saved=True
+                st.session_state.bill_total=total
 
-    # MEMBERSHIP FORM (only for user)
+    # MEMBERSHIP FORM (user only)
     st.markdown("---")
     st.subheader("🎟️ Manage Membership")
     with st.form("mem_form_user", clear_on_submit=True):
-        seller_cid = st.text_input("Employee CID (Seller)")
-        m_tier = st.selectbox("Tier", ["Tier1", "Tier2", "Tier3", "Racer"])
-        m_cust = st.text_input("Customer CID")
+        m_cust = st.text_input("Customer CID", key="mem_cust")
+        m_tier = st.selectbox("Tier", ["Tier1","Tier2","Tier3","Racer"], key="mem_tier")
+        seller_cid = st.text_input("Your CID (Seller)", key="mem_seller")
 
         submitted = st.form_submit_button("Add/Update Membership")
         if submitted:
-            MEMBERSHIP_PRICES = {"Tier1": 2000, "Tier2": 4000, "Tier3": 6000}
             if m_cust and m_tier in MEMBERSHIP_PRICES and seller_cid:
                 add_membership(m_cust, m_tier)
-                sale_amt = MEMBERSHIP_PRICES[m_tier]
-                save_bill(seller_cid, m_cust, "MEMBERSHIP", f"{m_tier} Membership", sale_amt)
-                st.success(f"{m_tier} membership updated and billed (₹{sale_amt})")
+                if m_tier != "Racer":  # billable memberships only
+                    sale_amt = MEMBERSHIP_PRICES[m_tier]
+                    save_bill(seller_cid, m_cust, "MEMBERSHIP", f"{m_tier} Membership", sale_amt)
+                    st.success(f"{m_tier} membership updated and billed (₹{sale_amt})")
+                else:
+                    st.success("Racer membership updated (no billing).")
             else:
                 st.warning("Fill all fields correctly.")
 
     # MEMBERSHIP CHECKER
     st.subheader("🔍 Check Membership")
-    lookup = st.text_input("Customer CID to check")
+    lookup=st.text_input("Customer CID to check", key="mem_lookup")
     if st.button("Check Membership"):
-        mem = get_membership(lookup)
+        mem=get_membership(lookup)
         if mem:
-            dop = datetime.strptime(mem["dop"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-            expiry = dop + timedelta(days=7)
-            rem = expiry - datetime.now(IST)
-            st.info(f"{lookup}: {mem['tier']}, expires in {rem.days}d {rem.seconds // 3600}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
+            dop=datetime.strptime(mem["dop"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+            expiry=dop+timedelta(days=7)
+            rem=expiry-datetime.now(IST)
+            st.info(f"{lookup}: {mem['tier']}, expires in {rem.days}d {rem.seconds//3600}h on {expiry.strftime('%Y-%m-%d %H:%M:%S')} IST")
         else:
             st.info(f"No active membership for {lookup}")
-
 
 # ---------- ADMIN PANEL & MAIN MENU -----------
 elif st.session_state.role=="admin":
@@ -489,9 +498,12 @@ elif st.session_state.role=="admin":
     if menu=="Sales":
         st.header("💹 Sales Overview")
         total_sales=get_total_billing()
+        bill_count=get_bill_count()
+        avg_sale=total_sales/bill_count if bill_count else 0.0
         sum_comm,sum_tax=get_total_commission_and_tax()
         profit=total_sales-(sum_comm+sum_tax)
         st.metric("Total Sales", f"₹{total_sales:,.2f}")
+        st.metric("Average Sale",f"₹{avg_sale:,.2f}")
         st.metric("Total Commission Paid",f"₹{sum_comm:,.2f}")
         st.metric("Total Tax on Commission", f"₹{sum_tax:,.2f}")
         st.metric("Estimated Profit", f"₹{profit:,.2f}")
@@ -512,10 +524,10 @@ elif st.session_state.role=="admin":
             hds=get_all_hoods()
             if hds:
                 names=[h[0] for h in hds]
-                sel=st.selectbox("Select Hood",names)
+                sel=st.selectbox("Select Hood",names, key="edit_hood_sel")
                 old_loc=dict(hds)[sel]
-                new_name=st.text_input("New Name",sel)
-                new_loc=st.text_input("New Location",old_loc)
+                new_name=st.text_input("New Name",sel, key="edit_hood_name")
+                new_loc=st.text_input("New Location",old_loc, key="edit_hood_loc")
                 if st.button("Update Hood"):
                     update_hood(sel,new_name,new_loc); st.success("Hood updated.")
                 if st.button("Delete Hood"):
@@ -528,10 +540,10 @@ elif st.session_state.role=="admin":
             hds=get_all_hoods()
             if hds:
                 hood_names=[h[0] for h in hds]
-                sel_hood = st.selectbox("Select Hood", hood_names, key="select_hood")
+                sel_hood = st.selectbox("Select Hood", hood_names, key="assign_hood_sel")
                 all_emp=get_all_employee_cids()
                 choices={f"{n} ({c})":c for c,n in all_emp}
-                sel_list=st.multiselect("Select Employees to assign", list(choices.keys()))
+                sel_list=st.multiselect("Select Employees to assign", list(choices.keys()), key="assign_emp_multi")
                 if st.button("Assign"):
                     assign_employees_to_hood(sel_hood, [choices[k] for k in sel_list])
                     st.success("Employees reassigned.")
@@ -554,13 +566,7 @@ elif st.session_state.role=="admin":
 
     elif menu=="Manage Staff":
         st.header("👷 Manage Staff")
-        tabs=st.tabs([
-    "➕ Add Employee",
-    "🗑️ Remove Employee",
-    "✏️ Edit Employee",
-    "📋 View All Employees"
-])
-
+        tabs=st.tabs(["➕ Add Employee","🗑️ Remove Employee","✏️ Edit Employee","📋 View All Employees"])
 
         with tabs[0]:
             st.subheader("➕ Add New Employee")
@@ -573,6 +579,8 @@ elif st.session_state.role=="admin":
                 if st.form_submit_button("Add Employee"):
                     if new_cid and new_name:
                         add_employee(new_cid,new_name,new_rank)
+                        if new_ood:  # typo guard
+                            pass
                         if new_hood!="No Hood":
                             update_employee(new_cid,hood=new_hood)
                         st.success(f"Added {new_name} ({new_cid})")
@@ -582,29 +590,38 @@ elif st.session_state.role=="admin":
         with tabs[1]:
             st.subheader("🗑️ Remove Employee")
             all_emp=get_all_employee_cids()
-            opts={f"{n} ({c})":c for c,n in all_emp}
-            sel=st.selectbox("Select Employee to Remove", list(opts.keys()))
-            if st.button("Delete Employee"):
-                delete_employee(opts[sel]); st.success(f"Removed {sel}")
+            if all_emp:
+                opts={f"{n} ({c})":c for c,n in all_emp}
+                sel=st.selectbox("Select Employee to Remove", list(opts.keys()), key="rm_emp_sel")
+                if st.button("Delete Employee"):
+                    delete_employee(opts[sel]); st.success(f"Removed {sel}")
+            else:
+                st.info("No employees to remove.")
 
         with tabs[2]:
             st.subheader("✏️ Edit Employee")
             all_emp=get_all_employee_cids()
-            opts={f"{n} ({c})":c for c,n in all_emp}
-            sel_emp=st.selectbox("Select Employee", list(opts.keys()))
-            details=get_employee_details(opts[sel_emp])
-            if details:
-                with st.form("edit_emp", clear_on_submit=True):
-                    name=st.text_input("Name",details["name"])
-                    rank=st.selectbox("Rank",list(COMMISSION_RATES.keys()),
-                                      index=list(COMMISSION_RATES.keys()).index(details["rank"]))
-                    hds=[h[0] for h in get_all_hoods()] or []
-                    hood=st.selectbox("Hood",["No Hood"]+hds,
-                                      index=(["No Hood"]+hds).index(details["hood"])
-                                            if details["hood"] in hds else 0)
-                    if st.form_submit_button("Update Employee"):
-                        update_employee(opts[sel_emp],name=name,rank=rank,hood=hood)
-                        st.success(f"Updated {sel_emp}")
+            if all_emp:
+                opts={f"{n} ({c})":c for c,n in all_emp}
+                sel_emp=st.selectbox("Select Employee", list(opts.keys()), key="edit_emp_sel")
+                if sel_emp:
+                    emp_cid = opts[sel_emp]
+                    details=get_employee_details(emp_cid)
+                    if details:
+                        with st.form("edit_emp", clear_on_submit=True):
+                            name=st.text_input("Name",details["name"])
+                            rank=st.selectbox("Rank",list(COMMISSION_RATES.keys()),
+                                              index=list(COMMISSION_RATES.keys()).index(details["rank"]))
+                            hds=[h[0] for h in get_all_hoods()] or []
+                            hood_choices=["No Hood"]+hds
+                            idx = hood_choices.index(details["hood"]) if details["hood"] in hood_choices else 0
+                            hood=st.selectbox("Hood",hood_choices, index=idx)
+                            if st.form_submit_button("Update Employee"):
+                                update_employee(emp_cid,name=name,rank=rank,hood=hood)
+                                st.success(f"Updated {sel_emp}")
+            else:
+                st.info("No employees to edit.")
+
         with tabs[3]:
             st.subheader("📋 All Employees List")
             all_rows = []
@@ -623,7 +640,6 @@ elif st.session_state.role=="admin":
             else:
                 st.info("No employees found.")
 
-
     else:  # Tracking
         st.header("📊 Tracking")
         tabs = st.tabs([
@@ -634,30 +650,26 @@ elif st.session_state.role=="admin":
         # Employee tab
         with tabs[0]:
             st.subheader("Employee Billing")
-            ranks = ["All"] + list(COMMISSION_RATES.keys())
-            sel_rank = st.selectbox("Filter by Rank", ranks)
+            ranks=["All"]+list(COMMISSION_RATES.keys())
+            sel_rank=st.selectbox("Filter by Rank", ranks)
 
-            all_emps = get_all_employee_cids()
-            if sel_rank != "All":
-                all_emps = [(cid, name) for cid, name in all_emps if get_employee_rank(cid) == sel_rank]
-
-            emp_keys = [f"{n} ({c})" for c, n in all_emps]
+            all_emps=get_all_employee_cids()
+            if sel_rank!="All":
+                all_emps=[(cid,name) for cid,name in all_emps if get_employee_rank(cid)==sel_rank]
+            emp_keys=[f"{n} ({c})" for c,n in all_emps]
             if not emp_keys:
                 st.info("No employees match that rank.")
             else:
-                sel = st.selectbox("Select Employee", emp_keys)
-                view = st.radio("View", ["Overall", "Detailed"], horizontal=True)
-                cid = dict(zip(emp_keys, [c for c, _ in all_emps]))[sel]
-
-                if view == "Overall":
-                    summary, total = get_billing_summary_by_cid(cid)
-                    for k, v in summary.items():
-                        st.metric(k, f"₹{v:.2f}")
-                    st.metric("Total", f"₹{total:.2f}")
-
+                sel=st.selectbox("Select Employee", emp_keys)
+                view=st.radio("View",["Overall","Detailed"],horizontal=True)
+                cid=dict(zip(emp_keys,[c for c,_ in all_emps]))[sel]
+                if view=="Overall":
+                    summary,total=get_billing_summary_by_cid(cid)
+                    for k,v in summary.items():
+                        st.metric(k,f"₹{v:.2f}")
+                    st.metric("Total",f"₹{total:.2f}")
                 else:
                     bills = get_employee_bills(cid)
-
                     if bills:
                         st.subheader("📋 Bill Entries")
                         for bill in bills:
@@ -677,55 +689,59 @@ elif st.session_state.role=="admin":
                                     conn.commit()
                                     conn.close()
                                     st.success(f"Deleted bill ID {bill_id}")
-                                
+                                    st.experimental_rerun()
                     else:
                         st.info("No bills found for this employee.")
-
 
         # Customer tab
         with tabs[1]:
             st.subheader("Customer Billing History")
-            cust=st.selectbox("Select Customer", get_all_customers())
-            df=pd.DataFrame(get_customer_bills(cust),
-                            columns=["Employee","Type","Details","Amount","Time","Commission","Tax"])
-            st.dataframe(df)
+            customers = get_all_customers()
+            if customers:
+                cust=st.selectbox("Select Customer", customers)
+                df=pd.DataFrame(get_customer_bills(cust),
+                                columns=["Employee","Type","Details","Amount","Time","Commission","Tax"])
+                st.dataframe(df)
+            else:
+                st.info("No customer billing data yet.")
 
         # Hood tab
         with tabs[2]:
             st.subheader("Hood Summary")
             hood_names=[h[0] for h in get_all_hoods()]
-            sel_hood=st.selectbox("Select Hood",hood_names)
-            rows=[]
-            for cid,name in get_employees_by_hood(sel_hood):
-                _,tot=get_billing_summary_by_cid(cid)
-                rows.append({"CID":cid,"Name":name,"Total":tot})
-            st.table(pd.DataFrame(rows))
+            if hood_names:
+                sel_hood=st.selectbox("Select Hood",hood_names)
+                rows=[]
+                for cid,name in get_employees_by_hood(sel_hood):
+                    _,tot=get_billing_summary_by_cid(cid)
+                    rows.append({"CID":cid,"Name":name,"Total":tot})
+                st.table(pd.DataFrame(rows))
+            else:
+                st.info("No hoods found.")
 
         # Membership tab
         with tabs[3]:
             st.subheader("📋 Memberships")
-            view = st.radio("Show", ["Active", "Past"], horizontal=True)
+            view=st.radio("Show",["Active","Past"],horizontal=True)
 
-            if view == "Active":
-                rows = get_all_memberships()
-                data = []
-                for cid, tier, dop_str in rows:
-                    dop = datetime.strptime(dop_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
-                    expiry = dop + timedelta(days=7)
-                    rem = expiry - datetime.now(IST)
+            if view=="Active":
+                rows=get_all_memberships()
+                data=[]
+                for cid,tier,dop_str in rows:
+                    dop=datetime.strptime(dop_str,"%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                    expiry=dop+timedelta(days=7)
+                    rem=expiry-datetime.now(IST)
                     data.append({
-                        "Customer CID": cid,
-                        "Tier": tier,
-                        "Started On": dop.strftime("%Y-%m-%d %H:%M:%S"),
-                        "Expires On": expiry.strftime("%Y-%m-%d %H:%M:%S"),
-                        "Remaining": f"{rem.days}d {rem.seconds // 3600}h"
+                        "Customer CID":cid,
+                        "Tier":tier,
+                        "Started On":dop.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Expires On":expiry.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Remaining":f"{rem.days}d {rem.seconds//3600}h"
                     })
-
                 st.table(pd.DataFrame(data))
 
                 st.markdown("---")
                 st.subheader("🗑️ Delete a Membership")
-
                 mem_options = {f"{cid} ({tier})": cid for cid, tier, _ in rows}
                 if mem_options:
                     sel_mem = st.selectbox("Select membership to delete", list(mem_options.keys()))
@@ -736,29 +752,26 @@ elif st.session_state.role=="admin":
                         conn.commit()
                         conn.close()
                         st.success(f"Deleted membership for {cid_to_delete}.")
+                        st.experimental_rerun()
                 else:
                     st.info("No active memberships found.")
-
             else:
-                rows = get_past_memberships()
-                data = []
-                for cid, tier, dop_str, expired_str in rows:
+                rows=get_past_memberships()
+                data=[]
+                for cid,tier,dop_str,expired_str in rows:
                     data.append({
-                        "Customer CID": cid,
-                        "Tier": tier,
-                        "Started On": dop_str,
-                        "Expired At": expired_str
+                        "Customer CID":cid,
+                        "Tier":tier,
+                        "Started On":dop_str,
+                        "Expired At":expired_str
                     })
                 st.table(pd.DataFrame(data))
-
-
-         
 
         # Employee Rankings tab
         with tabs[4]:
             st.subheader("🏆 Employee Rankings")
             metric=st.selectbox("Select ranking metric",
-                                ["Total Sales","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION","MEMBERSHIPS"])
+                                ["Total Sales","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION","MEMBERSHIP"])
             ranking=[]
             conn=sqlite3.connect("auto_exotic_billing.db")
             for cid,name in get_all_employee_cids():
