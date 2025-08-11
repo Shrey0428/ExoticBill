@@ -579,7 +579,7 @@ elif st.session_state.role=="admin":
                 if st.form_submit_button("Add Employee"):
                     if new_cid and new_name:
                         add_employee(new_cid,new_name,new_rank)
-                        if new_ood:  # typo guard
+                        if new_hood:  # typo guard
                             pass
                         if new_hood!="No Hood":
                             update_employee(new_cid,hood=new_hood)
