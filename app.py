@@ -786,7 +786,7 @@ elif st.session_state.role=="admin":
                 ranking.append({"Employee":f"{name} ({cid})", metric:val})
             conn.close()
             df_rank=pd.DataFrame(ranking).sort_values(by=metric,ascending=False)
-            st.table(df_rank.head(40))
+            st.table(df_rank.head(100))
 
         # Custom Filter tab
         with tabs[5]:
