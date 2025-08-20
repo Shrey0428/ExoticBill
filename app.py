@@ -149,13 +149,12 @@ def save_bill(emp, cust, btype, det, amt):
 
     # Commission rules:
     # - No commission/tax on UPGRADES and MEMBERSHIP
-    # - No commission/tax on ITEMS if ONLY Harness or ONLY NOS are present
+    # - No commission/tax on ITEMS if ONLY Harness and/or NOS are present
     no_commission = False
     if btype in ["UPGRADES", "MEMBERSHIP"]:
         no_commission = True
     elif btype == "ITEMS":
         no_commission_items = {"Harness", "NOS"}
-        # parse item names from "Item×Qty, Item×Qty"
         item_names = []
         if det:
             try:
@@ -301,7 +300,7 @@ def get_customer_bills(cid):
                total_amount, timestamp, commission, tax
         FROM bills WHERE customer_cid=?
         ORDER BY timestamp DESC
-    """, (cid,)).fetchall()
+    """).fetchall()
     conn.close()
     return rows
 
@@ -483,14 +482,16 @@ if st.session_state.role == "user":
 
         submitted = st.form_submit_button("Add/Update Membership")
         if submitted:
-            if m_cust and m_tier in MEMBERSHIP_PRICES and seller_cid:
+            if m_cust and seller_cid and m_tier:
                 add_membership(m_cust, m_tier)
-                if m_tier != "Racer":  # billable memberships only
+                if m_tier in MEMBERSHIP_PRICES:
                     sale_amt = MEMBERSHIP_PRICES[m_tier]
                     save_bill(seller_cid, m_cust, "MEMBERSHIP", f"{m_tier} Membership", sale_amt)
                     st.success(f"{m_tier} membership updated and billed (₹{sale_amt})")
-                else:
+                elif m_tier == "Racer":
                     st.success("Racer membership updated (no billing).")
+                else:
+                    st.warning("Unknown tier.")
             else:
                 st.warning("Fill all fields correctly.")
 
@@ -521,7 +522,7 @@ elif st.session_state.role=="admin":
 
     menu=st.sidebar.selectbox(
         "Main Menu",
-        ["Sales","Manage Hoods","Manage Staff","Tracking","Bill Logs"],  # added Bill Logs
+        ["Sales","Manage Hoods","Manage Staff","Tracking","Bill Logs"],
         index=0
     )
 
@@ -609,8 +610,6 @@ elif st.session_state.role=="admin":
                 if st.form_submit_button("Add Employee"):
                     if new_cid and new_name:
                         add_employee(new_cid,new_name,new_rank)
-                        if new_hood:
-                            pass
                         if new_hood!="No Hood":
                             update_employee(new_cid,hood=new_hood)
                         st.success(f"Added {new_name} ({new_cid})")
@@ -913,7 +912,6 @@ elif st.session_state.role=="admin":
             "Customer CID", "Type", "Details", "Amount", "Commission", "Tax"
         ])
 
-        # Apply filters
         if type_filter:
             df = df[df["Type"].isin(type_filter)]
         if emp_query:
