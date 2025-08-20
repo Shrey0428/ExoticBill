@@ -295,13 +295,17 @@ def get_all_customers():
 
 def get_customer_bills(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    rows = conn.execute("""
-        SELECT employee_cid, billing_type, details,
-               total_amount, timestamp, commission, tax
-        FROM bills WHERE customer_cid=?
-        ORDER BY timestamp DESC
-    """).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute("""
+            SELECT employee_cid, billing_type, details,
+                   total_amount, timestamp, commission, tax
+            FROM bills
+            WHERE customer_cid = ?
+            ORDER BY timestamp DESC
+        """, (cid,)).fetchall()   # ← pass (cid,) here
+        return rows
+    finally:
+        conn.close()
     return rows
 
 def get_total_billing():
