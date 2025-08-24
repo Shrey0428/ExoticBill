@@ -601,6 +601,54 @@ def get_bill_logs(start_str=None, end_str=None):
 
 
 # ---------- SHIFT HELPERS ----------
+def _ensure_shifts_schema(conn):
+    """
+    Ensure the 'shifts' table exists and contains all required columns.
+    Safe to call repeatedly; will migrate older tables forward.
+    """
+    cur = conn.cursor()
+    # Does the table exist?
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='shifts'")
+    exists = cur.fetchone() is not None
+
+    if not exists:
+        # Fresh create with full schema
+        cur.executescript("""
+            CREATE TABLE IF NOT EXISTS shifts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_cid TEXT,
+                start_ts TEXT,
+                end_ts TEXT,
+                duration_minutes INTEGER,
+                bills_count INTEGER,
+                revenue REAL
+            );
+        """)
+    else:
+        # Migrate missing columns on older DBs
+        cols = {row[1] for row in cur.execute("PRAGMA table_info('shifts')").fetchall()}
+        if "employee_cid" not in cols:
+            cur.execute("ALTER TABLE shifts ADD COLUMN employee_cid TEXT")
+        if "start_ts" not in cols:
+            cur.execute("ALTER TABLE shifts ADD COLUMN start_ts TEXT")
+        if "end_ts" not in cols:
+            cur.execute("ALTER TABLE shifts ADD COLUMN end_ts TEXT")
+        if "duration_minutes" not in cols:
+            cur.execute("ALTER TABLE shifts ADD COLUMN duration_minutes INTEGER")
+        if "bills_count" not in cols:
+            cur.execute("ALTER TABLE shifts ADD COLUMN bills_count INTEGER")
+        if "revenue" not in cols:
+            cur.execute("ALTER TABLE shifts ADD COLUMN revenue REAL")
+
+    # Create the index if missing (works on old SQLite too)
+    try:
+        cur.execute("CREATE INDEX idx_shifts_emp_active ON shifts(employee_cid, end_ts)")
+    except sqlite3.OperationalError:
+        # Index already exists (or older SQLite message) – ignore
+        pass
+
+    conn.commit()
+
 def start_shift(employee_cid):
     if not (employee_cid and str(employee_cid).strip()):
         return False, "Please enter your CID first."
