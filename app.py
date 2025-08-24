@@ -533,6 +533,8 @@ def get_bill_logs(start_str=None, end_str=None):
     return rows
 
 # ---------- SHIFT HELPERS ----------
+import sqlite3
+
 def _ensure_shifts_table(conn):
     conn.execute("""
       CREATE TABLE IF NOT EXISTS shifts (
@@ -547,17 +549,28 @@ def _ensure_shifts_table(conn):
     """)
 
 def start_shift(employee_cid):
-    if not employee_cid:
+    if not (employee_cid and str(employee_cid).strip()):
         return False, "Please enter your CID first."
+
     conn = sqlite3.connect("auto_exotic_billing.db")
     try:
+        # Ensure table exists, then try the SELECT. If it still errors, retry once.
         _ensure_shifts_table(conn)
-        active = conn.execute(
-            "SELECT id FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
-            (employee_cid,)
-        ).fetchone()
+        try:
+            active = conn.execute(
+                "SELECT id FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+                (employee_cid,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            _ensure_shifts_table(conn)
+            active = conn.execute(
+                "SELECT id FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+                (employee_cid,)
+            ).fetchone()
+
         if active:
             return False, "Shift already active."
+
         conn.execute(
             "INSERT INTO shifts (employee_cid, start_ts) VALUES (?,?)",
             (employee_cid, datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"))
@@ -565,22 +578,33 @@ def start_shift(employee_cid):
         conn.commit()
     finally:
         conn.close()
+
     audit("SHIFT_START", "shifts", "-", st.session_state.get("username","?"),
           new_values={"employee_cid": employee_cid})
     return True, "Shift started."
 
 def end_shift(employee_cid):
-    if not employee_cid:
+    if not (employee_cid and str(employee_cid).strip()):
         return False, "Please enter your CID first."
+
     conn = sqlite3.connect("auto_exotic_billing.db")
     try:
         _ensure_shifts_table(conn)
-        row = conn.execute(
-            "SELECT id, start_ts FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
-            (employee_cid,)
-        ).fetchone()
+        try:
+            row = conn.execute(
+                "SELECT id, start_ts FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+                (employee_cid,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            _ensure_shifts_table(conn)
+            row = conn.execute(
+                "SELECT id, start_ts FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+                (employee_cid,)
+            ).fetchone()
+
         if not row:
             return False, "No active shift."
+
         sid, start_ts = row
         now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
         bills = conn.execute("""
@@ -588,9 +612,11 @@ def end_shift(employee_cid):
             FROM bills WHERE employee_cid=? AND timestamp>=? AND timestamp<=?
         """, (employee_cid, start_ts, now)).fetchone()
         bcount, revenue = (bills[0] or 0, bills[1] or 0.0)
+
         dt_start = datetime.strptime(start_ts, "%Y-%m-%d %H:%M:%S")
         dt_end = datetime.strptime(now, "%Y-%m-%d %H:%M:%S")
         duration = int((dt_end - dt_start).total_seconds() // 60)
+
         conn.execute("""
             UPDATE shifts SET end_ts=?, duration_minutes=?, bills_count=?, revenue=?
             WHERE id=?
@@ -598,34 +624,11 @@ def end_shift(employee_cid):
         conn.commit()
     finally:
         conn.close()
+
     audit("SHIFT_END", "shifts", sid, st.session_state.get("username","?"),
           old_values={"start_ts": start_ts},
           new_values={"end_ts": now, "bills": bcount, "revenue": revenue})
     return True, "Shift ended."
-
-# ---------- AUTHENTICATION -----------
-def login(u, p):
-    if u == "AutoExotic" and p == "AutoExotic123":
-        st.session_state.logged_in, st.session_state.role, st.session_state.username = True, "admin", u
-    elif u == "User" and p == "User123":
-        st.session_state.logged_in, st.session_state.role, st.session_state.username = True, "user", u
-    else:
-        st.error("Invalid credentials")
-
-if not st.session_state.logged_in:
-    st.title("🧾 ExoticBill Login")
-    with st.form("login_form"):
-        uname = st.text_input("Username")
-        pwd = st.text_input("Password", type="password")
-        if st.form_submit_button("Login"):
-            login(uname, pwd)
-    st.stop()
-
-with st.sidebar:
-    st.success(f"Logged in as: {st.session_state.username}")
-    if st.button("Logout"):
-        st.session_state.clear()
-        st.rerun()
 
 # ---------- USER PANEL -----------
 if st.session_state.role == "user":
