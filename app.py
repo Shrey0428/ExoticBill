@@ -3,7 +3,6 @@ import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from math import floor
 
 # ---------- CONFIG & SESSION STATE -----------
 IST = ZoneInfo("Asia/Kolkata")
@@ -36,6 +35,7 @@ MEMBERSHIP_DISCOUNTS = {
     "Tier3": {"REPAIR": 0.50, "CUSTOMIZATION": 0.30},
     "Racer": {"REPAIR": 0.00, "CUSTOMIZATION": 0.00},
 }
+
 # ---------- MEMBERSHIP PRICES -----------
 MEMBERSHIP_PRICES = {"Tier1": 2000, "Tier2": 4000, "Tier3": 6000}
 
@@ -50,10 +50,6 @@ COMMISSION_RATES = {
     "CEO": 0.69,
 }
 TAX_RATE = 0.05  # 5% on the commission
-
-# ---------- LOYALTY CONFIG -----------
-# Earn 1 point per ₹500 spent (non-membership bills only)
-LOYALTY_RUPEES_PER_POINT = 500
 
 # ---------- DATABASE INIT & MIGRATION -----------
 def init_db():
@@ -107,52 +103,10 @@ def init_db():
         location TEXT
       )
     """)
-    # deleted bills (audit)
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS deleted_bills (
-        id INTEGER,
-        employee_cid TEXT,
-        customer_cid TEXT,
-        billing_type TEXT,
-        details TEXT,
-        total_amount REAL,
-        timestamp TEXT,
-        commission REAL,
-        tax REAL,
-        deleted_by TEXT,
-        delete_reason TEXT,
-        deleted_at TEXT
-      )
-    """)
-    # shifts
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS shifts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        employee_cid TEXT,
-        start_time TEXT,
-        end_time TEXT
-      )
-    """)
-    # loyalty points (aggregate)
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS loyalty (
-        customer_cid TEXT PRIMARY KEY,
-        points INTEGER DEFAULT 0,
-        updated_at TEXT
-      )
-    """)
-    # optional loyalty history for auditability
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS loyalty_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        customer_cid TEXT,
-        delta_points INTEGER,
-        reason TEXT,
-        created_at TEXT
-      )
-    """)
+
     conn.commit()
     conn.close()
+
 init_db()
 
 # ---------- PURGE EXPIRED MEMBERSHIPS & ARCHIVE -----------
@@ -180,6 +134,7 @@ def purge_expired_memberships():
     c.execute("DELETE FROM memberships WHERE dop <= ?", (cutoff_str,))
     conn.commit()
     conn.close()
+
 purge_expired_memberships()
 
 # ---------- DATABASE HELPERS -----------
@@ -189,51 +144,25 @@ def get_employee_rank(cid):
     conn.close()
     return row[0] if row else "Trainee"
 
-def adjust_loyalty_points(customer_cid, delta, reason):
-    if not customer_cid:
-        return
-    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    c = conn.cursor()
-    row = c.execute("SELECT points FROM loyalty WHERE customer_cid=?", (customer_cid,)).fetchone()
-    if row:
-        new_pts = max(0, (row[0] or 0) + int(delta))
-        c.execute("UPDATE loyalty SET points=?, updated_at=? WHERE customer_cid=?",
-                  (new_pts, now_str, customer_cid))
-    else:
-        new_pts = max(0, int(delta))
-        c.execute("INSERT INTO loyalty (customer_cid, points, updated_at) VALUES (?,?,?)",
-                  (customer_cid, new_pts, now_str))
-    c.execute("INSERT INTO loyalty_history (customer_cid, delta_points, reason, created_at) VALUES (?,?,?,?)",
-              (customer_cid, int(delta), reason, now_str))
-    conn.commit()
-    conn.close()
-
-def get_loyalty_points(customer_cid):
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    row = conn.execute("SELECT points, updated_at FROM loyalty WHERE customer_cid=?", (customer_cid,)).fetchone()
-    conn.close()
-    if row:
-        return {"points": int(row[0] or 0), "updated_at": row[1]}
-    return {"points": 0, "updated_at": None}
-
 def save_bill(emp, cust, btype, det, amt):
     now_ist = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
     # Commission rules:
     # - No commission/tax on UPGRADES and MEMBERSHIP
-    # - No commission/tax on ITEMS if ONLY Harness and/or NOS are present
+    # - No commission/tax on ITEMS if ONLY Harness or ONLY NOS are present
     no_commission = False
     if btype in ["UPGRADES", "MEMBERSHIP"]:
         no_commission = True
     elif btype == "ITEMS":
         no_commission_items = {"Harness", "NOS"}
+        # parse item names from "Item×Qty, Item×Qty"
         item_names = []
         if det:
             try:
                 item_names = [i.strip().split("×")[0] for i in det.split(",") if i.strip()]
             except Exception:
                 item_names = []
+        # If there are items and all are in the no-commission set:
         if item_names and all(name in no_commission_items for name in item_names):
             no_commission = True
 
@@ -254,16 +183,13 @@ def save_bill(emp, cust, btype, det, amt):
     conn.commit()
     conn.close()
 
-    # Loyalty: earn points on NON-membership bills
-    if btype != "MEMBERSHIP":
-        pts = int(amt // LOYALTY_RUPEES_PER_POINT)
-        if pts > 0:
-            adjust_loyalty_points(cust, pts, f"Earnings from {btype} bill ₹{amt:.2f}")
-
 def add_employee(cid, name, rank="Trainee"):
     conn = sqlite3.connect("auto_exotic_billing.db")
     try:
-        conn.execute("INSERT INTO employees (cid, name, rank) VALUES (?,?,?)", (cid, name, rank))
+        conn.execute(
+            "INSERT INTO employees (cid, name, rank) VALUES (?,?,?)",
+            (cid, name, rank)
+        )
         conn.commit()
     except sqlite3.IntegrityError:
         st.warning("Employee CID already exists.")
@@ -288,7 +214,9 @@ def update_employee(cid, name=None, rank=None, hood=None):
 
 def get_employee_details(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    row = conn.execute("SELECT name, rank, hood FROM employees WHERE cid = ?", (cid,)).fetchone()
+    row = conn.execute(
+        "SELECT name, rank, hood FROM employees WHERE cid = ?", (cid,)
+    ).fetchone()
     conn.close()
     if row:
         return {"name": row[0], "rank": row[1], "hood": row[2]}
@@ -303,14 +231,18 @@ def get_all_employee_cids():
 def add_membership(cust, tier):
     dop_ist = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect("auto_exotic_billing.db")
-    conn.execute("INSERT OR REPLACE INTO memberships (customer_cid, tier, dop) VALUES (?,?,?)",
-                 (cust, tier, dop_ist))
+    conn.execute(
+        "INSERT OR REPLACE INTO memberships (customer_cid, tier, dop) VALUES (?,?,?)",
+        (cust, tier, dop_ist)
+    )
     conn.commit()
     conn.close()
 
 def get_membership(cust):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    row = conn.execute("SELECT tier, dop FROM memberships WHERE customer_cid = ?", (cust,)).fetchone()
+    row = conn.execute(
+        "SELECT tier, dop FROM memberships WHERE customer_cid = ?", (cust,)
+    ).fetchone()
     conn.close()
     return {"tier": row[0], "dop": row[1]} if row else None
 
@@ -333,13 +265,17 @@ def get_past_memberships():
 def get_billing_summary_by_cid(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
     summary = {}
+    # Include MEMBERSHIP so it rolls up into totals/rankings
     for bt in ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION","MEMBERSHIP"]:
         amt = conn.execute(
             "SELECT SUM(total_amount) FROM bills WHERE employee_cid=? AND billing_type=?",
             (cid, bt)
         ).fetchone()[0] or 0.0
         summary[bt] = amt
-    total = conn.execute("SELECT SUM(total_amount) FROM bills WHERE employee_cid=?", (cid,)).fetchone()[0] or 0.0
+    total = conn.execute(
+        "SELECT SUM(total_amount) FROM bills WHERE employee_cid=?",
+        (cid,)
+    ).fetchone()[0] or 0.0
     conn.close()
     return summary, total
 
@@ -362,17 +298,14 @@ def get_all_customers():
 
 def get_customer_bills(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
-    try:
-        rows = conn.execute("""
-            SELECT employee_cid, billing_type, details,
-                   total_amount, timestamp, commission, tax
-            FROM bills
-            WHERE customer_cid = ?
-            ORDER BY timestamp DESC
-        """, (cid,)).fetchall()
-        return rows
-    finally:
-        conn.close()
+    rows = conn.execute("""
+        SELECT employee_cid, billing_type, details,
+               total_amount, timestamp, commission, tax
+        FROM bills WHERE customer_cid=?
+        ORDER BY timestamp DESC
+    """, (cid,)).fetchall()
+    conn.close()
+    return rows
 
 def get_total_billing():
     conn = sqlite3.connect("auto_exotic_billing.db")
@@ -424,185 +357,18 @@ def get_all_hoods():
     conn.close()
     return rows
 
+def assign_employees_to_hood(hood, cids):
+    conn = sqlite3.connect("auto_exotic_billing.db")
+    for cid in cids:
+        conn.execute("UPDATE employees SET hood=? WHERE cid=?", (hood, cid))
+    conn.commit()
+    conn.close()
+
 def get_employees_by_hood(hood):
     conn = sqlite3.connect("auto_exotic_billing.db")
     rows = conn.execute("SELECT cid, name FROM employees WHERE hood=?", (hood,)).fetchall()
     conn.close()
     return rows
-
-# ---------- BILL LOGS HELPER ----------
-def get_bill_logs(start_str=None, end_str=None):
-    """
-    Returns bill logs joined with employee details.
-    If start_str and end_str are provided (YYYY-MM-DD HH:MM:SS),
-    results are filtered inclusively by timestamp.
-    """
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    c = conn.cursor()
-    base_sql = """
-        SELECT
-            b.id, b.timestamp,
-            COALESCE(e.name, 'Unknown') AS emp_name,
-            b.employee_cid,
-            COALESCE(e.hood, 'No Hood') AS hood,
-            b.customer_cid, b.billing_type, b.details,
-            b.total_amount, b.commission, b.tax
-        FROM bills b
-        LEFT JOIN employees e ON e.cid = b.employee_cid
-    """
-    params = ()
-    if start_str and end_str:
-        base_sql += " WHERE b.timestamp >= ? AND b.timestamp <= ?"
-        params = (start_str, end_str)
-    base_sql += " ORDER BY b.timestamp DESC"
-    rows = c.execute(base_sql, params).fetchall()
-    conn.close()
-    return rows
-
-# ---------- AUDITED DELETE ----------
-def delete_bill_with_audit(bill_id, deleted_by, reason=""):
-    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    c = conn.cursor()
-    row = c.execute("""
-        SELECT id, employee_cid, customer_cid, billing_type, details,
-               total_amount, timestamp, commission, tax
-        FROM bills WHERE id=?
-    """, (bill_id,)).fetchone()
-    if not row:
-        conn.close()
-        return False
-    # copy into audit table
-    c.execute("""
-        INSERT INTO deleted_bills
-        (id, employee_cid, customer_cid, billing_type, details, total_amount,
-         timestamp, commission, tax, deleted_by, delete_reason, deleted_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    """, (row[0], row[1], row[2], row[3], row[4], row[5],
-          row[6], row[7], row[8], deleted_by, reason, now_str))
-    # delete original
-    c.execute("DELETE FROM bills WHERE id=?", (bill_id,))
-    conn.commit()
-    conn.close()
-    return True
-
-def get_deleted_bills(start_str=None, end_str=None):
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    c = conn.cursor()
-    base = "SELECT * FROM deleted_bills"
-    params = ()
-    if start_str and end_str:
-        base += " WHERE deleted_at >= ? AND deleted_at <= ?"
-        params = (start_str, end_str)
-    base += " ORDER BY deleted_at DESC"
-    rows = c.execute(base, params).fetchall()
-    conn.close()
-    return rows
-
-# ---------- SHIFTS ----------
-def start_shift(employee_cid):
-    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    c = conn.cursor()
-    active = c.execute("SELECT id FROM shifts WHERE employee_cid=? AND end_time IS NULL", (employee_cid,)).fetchone()
-    if active:
-        conn.close()
-        return False
-    c.execute("INSERT INTO shifts (employee_cid, start_time, end_time) VALUES (?,?,NULL)",
-              (employee_cid, now_str))
-    conn.commit()
-    conn.close()
-    return True
-
-def end_shift(employee_cid):
-    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    c = conn.cursor()
-    active = c.execute("SELECT id FROM shifts WHERE employee_cid=? AND end_time IS NULL", (employee_cid,)).fetchone()
-    if not active:
-        conn.close()
-        return False
-    c.execute("UPDATE shifts SET end_time=? WHERE id=?", (now_str, active[0]))
-    conn.commit()
-    conn.close()
-    return True
-
-def get_active_shifts():
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    rows = conn.execute("""
-        SELECT s.employee_cid, e.name, e.hood, s.start_time
-        FROM shifts s LEFT JOIN employees e ON e.cid=s.employee_cid
-        WHERE s.end_time IS NULL
-        ORDER BY s.start_time ASC
-    """).fetchall()
-    conn.close()
-    return rows
-
-def get_recent_shifts(days=7):
-    since = (datetime.now(IST) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    rows = conn.execute("""
-        SELECT s.employee_cid, e.name, e.hood, s.start_time, s.end_time
-        FROM shifts s LEFT JOIN employees e ON e.cid=s.employee_cid
-        WHERE s.start_time >= ?
-        ORDER BY s.start_time DESC
-    """, (since,)).fetchall()
-    conn.close()
-    return rows
-
-def get_daily_sales(n_days=7):
-    since = (datetime.now(IST) - timedelta(days=n_days-1)).strftime("%Y-%m-%d 00:00:00")
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    rows = conn.execute("""
-        SELECT substr(timestamp,1,10) as day, SUM(total_amount)
-        FROM bills
-        WHERE timestamp >= ?
-        GROUP BY day
-        ORDER BY day ASC
-    """, (since,)).fetchall()
-    conn.close()
-    return rows
-
-def get_sales_between(start_str, end_str):
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    total = conn.execute("""
-        SELECT SUM(total_amount) FROM bills
-        WHERE timestamp >= ? AND timestamp <= ?
-    """, (start_str, end_str)).fetchone()[0] or 0.0
-    conn.close()
-    return total
-
-def get_sales_by_hood(start_str, end_str):
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    rows = conn.execute("""
-        SELECT COALESCE(e.hood,'No Hood') AS hood, SUM(b.total_amount) as total
-        FROM bills b LEFT JOIN employees e ON e.cid=b.employee_cid
-        WHERE b.timestamp >= ? AND b.timestamp <= ?
-        GROUP BY hood
-        ORDER BY total DESC
-    """, (start_str, end_str)).fetchall()
-    conn.close()
-    return rows
-
-def get_mvp_by_hood(start_str, end_str):
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    rows = conn.execute("""
-        SELECT COALESCE(e.hood,'No Hood') AS hood,
-               COALESCE(e.name,'Unknown') AS name,
-               b.employee_cid,
-               SUM(b.total_amount) as total
-        FROM bills b LEFT JOIN employees e ON e.cid=b.employee_cid
-        WHERE b.timestamp >= ? AND b.timestamp <= ?
-        GROUP BY hood, b.employee_cid
-        ORDER BY hood ASC, total DESC
-    """, (start_str, end_str)).fetchall()
-    conn.close()
-    # pick top per hood
-    mvp = {}
-    for hood, name, cid, total in rows:
-        if hood not in mvp:
-            mvp[hood] = {"Employee": f"{name} ({cid})", "Total": total}
-    return mvp
 
 # ---------- AUTHENTICATION -----------
 def login(u, p):
@@ -628,7 +394,7 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-# ===================== USER PANEL =====================
+# ---------- USER PANEL -----------
 if st.session_state.role == "user":
     st.title("🧾 ExoticBill - Add New Bill")
     if st.session_state.bill_saved:
@@ -680,22 +446,23 @@ if st.session_state.role == "user":
                 st.session_state.bill_saved=True
                 st.session_state.bill_total=total
 
-    # MEMBERSHIP FORM (user)
+    # MEMBERSHIP FORM (user only)
     st.markdown("---")
     st.subheader("🎟️ Manage Membership")
     with st.form("mem_form_user", clear_on_submit=True):
         m_cust = st.text_input("Customer CID", key="mem_cust")
         m_tier = st.selectbox("Tier", ["Tier1","Tier2","Tier3","Racer"], key="mem_tier")
         seller_cid = st.text_input("Your CID (Seller)", key="mem_seller")
+
         submitted = st.form_submit_button("Add/Update Membership")
         if submitted:
-            if m_cust and seller_cid and m_tier:
+            if m_cust and m_tier in MEMBERSHIP_PRICES and seller_cid:
                 add_membership(m_cust, m_tier)
-                if m_tier in MEMBERSHIP_PRICES:
+                if m_tier != "Racer":  # billable memberships only
                     sale_amt = MEMBERSHIP_PRICES[m_tier]
                     save_bill(seller_cid, m_cust, "MEMBERSHIP", f"{m_tier} Membership", sale_amt)
                     st.success(f"{m_tier} membership updated and billed (₹{sale_amt})")
-                elif m_tier == "Racer":
+                else:
                     st.success("Racer membership updated (no billing).")
             else:
                 st.warning("Fill all fields correctly.")
@@ -713,35 +480,7 @@ if st.session_state.role == "user":
         else:
             st.info(f"No active membership for {lookup}")
 
-    # SHIFT TRACKER (user)
-    st.markdown("---")
-    st.subheader("🕒 Shift Tracker")
-    with st.form("shift_form", clear_on_submit=True):
-        my_cid = st.text_input("Your CID (to track shift)", key="shift_my_cid")
-        colx, coly = st.columns(2)
-        with colx:
-            if st.form_submit_button("▶️ Start Shift"):
-                if my_cid:
-                    ok = start_shift(my_cid)
-                    st.success("Shift started.") if ok else st.warning("You already have an active shift.")
-                else:
-                    st.warning("Enter your CID.")
-        with coly:
-            if st.form_submit_button("⏹ End Shift"):
-                if my_cid:
-                    ok = end_shift(my_cid)
-                    st.success("Shift ended.") if ok else st.warning("No active shift found.")
-                else:
-                    st.warning("Enter your CID.")
-
-    # CUSTOMER LOYALTY (user)
-    st.subheader("💚 Customer Loyalty")
-    c_loy = st.text_input("Customer CID (check points)", key="loyalty_cust")
-    if st.button("Check Points"):
-        data = get_loyalty_points(c_loy)
-        st.info(f"{c_loy}: **{data['points']}** points (updated: {data['updated_at'] or 'N/A'})")
-
-# ===================== ADMIN PANEL =====================
+# ---------- ADMIN PANEL & MAIN MENU -----------
 elif st.session_state.role=="admin":
     st.title("👑 ExoticBill Admin")
     st.metric("💵 Total Revenue", f"₹{get_total_billing():,.2f}")
@@ -753,61 +492,10 @@ elif st.session_state.role=="admin":
         conn.execute("DELETE FROM bills"); conn.commit(); conn.close()
         st.success("All billing records have been reset.")
 
-    menu=st.sidebar.selectbox(
-        "Main Menu",
-        ["Dashboard","Sales","Manage Hoods","Manage Staff","Tracking","Bill Logs","Hood War","Shifts","Loyalty"],
-        index=0
-    )
+    menu=st.sidebar.selectbox("Main Menu",
+        ["Sales","Manage Hoods","Manage Staff","Tracking"], index=0)
 
-    # ---------- DASHBOARD (Real-time) ----------
-    if menu=="Dashboard":
-        st.header("📈 Real-Time Dashboard")
-        autorefresh = st.checkbox("Auto-refresh every 60 seconds", value=False)
-        if autorefresh:
-            st.markdown("<meta http-equiv='refresh' content='60'>", unsafe_allow_html=True)
-        now = datetime.now(IST)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = now.replace(hour=23, minute=59, second=59, microsecond=0)
-        start7 = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
-
-        # KPIs
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            today_rev = get_sales_between(today_start.strftime("%Y-%m-%d %H:%M:%S"),
-                                          today_end.strftime("%Y-%m-%d %H:%M:%S"))
-            st.metric("Revenue Today", f"₹{today_rev:,.2f}")
-        with col2:
-            conn = sqlite3.connect("auto_exotic_billing.db")
-            today_cnt = conn.execute("SELECT COUNT(*) FROM bills WHERE timestamp >= ? AND timestamp <= ?",
-                                     (today_start.strftime("%Y-%m-%d %H:%M:%S"),
-                                      today_end.strftime("%Y-%m-%d %H:%M:%S"))).fetchone()[0] or 0
-            conn.close()
-            st.metric("Bills Today", f"{today_cnt:,}")
-        with col3:
-            active = len(get_active_shifts())
-            st.metric("Active Shifts", active)
-        with col4:
-            conn = sqlite3.connect("auto_exotic_billing.db")
-            mem_today = conn.execute("""
-                SELECT COUNT(*) FROM bills
-                WHERE billing_type='MEMBERSHIP' AND timestamp >= ? AND timestamp <= ?
-            """, (today_start.strftime("%Y-%m-%d %H:%M:%S"),
-                  today_end.strftime("%Y-%m-%d %H:%M:%S"))).fetchone()[0] or 0
-            conn.close()
-            st.metric("Membership Sales Today", mem_today)
-
-        # Last 7 days revenue chart
-        st.markdown("#### Revenue - Last 7 Days")
-        rows = get_daily_sales(7)
-        if rows:
-            df = pd.DataFrame(rows, columns=["Date","Revenue"]).set_index("Date")
-            st.line_chart(df)
-        else:
-            st.info("No data for the last 7 days yet.")
-
-        st.caption(f"Updated at {now.strftime('%Y-%m-%d %H:%M:%S')} IST")
-
-    elif menu=="Sales":
+    if menu=="Sales":
         st.header("💹 Sales Overview")
         total_sales=get_total_billing()
         bill_count=get_bill_count()
@@ -857,11 +545,7 @@ elif st.session_state.role=="admin":
                 choices={f"{n} ({c})":c for c,n in all_emp}
                 sel_list=st.multiselect("Select Employees to assign", list(choices.keys()), key="assign_emp_multi")
                 if st.button("Assign"):
-                    conn = sqlite3.connect("auto_exotic_billing.db")
-                    for label in sel_list:
-                        cid = choices[label]
-                        conn.execute("UPDATE employees SET hood=? WHERE cid=?", (sel_hood, cid))
-                    conn.commit(); conn.close()
+                    assign_employees_to_hood(sel_hood, [choices[k] for k in sel_list])
                     st.success("Employees reassigned.")
             else:
                 st.info("Define some hoods first.")
@@ -895,6 +579,8 @@ elif st.session_state.role=="admin":
                 if st.form_submit_button("Add Employee"):
                     if new_cid and new_name:
                         add_employee(new_cid,new_name,new_rank)
+                        if new_hood:  # typo guard
+                            pass
                         if new_hood!="No Hood":
                             update_employee(new_cid,hood=new_hood)
                         st.success(f"Added {new_name} ({new_cid})")
@@ -926,3 +612,200 @@ elif st.session_state.role=="admin":
                             name=st.text_input("Name",details["name"])
                             rank=st.selectbox("Rank",list(COMMISSION_RATES.keys()),
                                               index=list(COMMISSION_RATES.keys()).index(details["rank"]))
+                            hds=[h[0] for h in get_all_hoods()] or []
+                            hood_choices=["No Hood"]+hds
+                            idx = hood_choices.index(details["hood"]) if details["hood"] in hood_choices else 0
+                            hood=st.selectbox("Hood",hood_choices, index=idx)
+                            if st.form_submit_button("Update Employee"):
+                                update_employee(emp_cid,name=name,rank=rank,hood=hood)
+                                st.success(f"Updated {sel_emp}")
+            else:
+                st.info("No employees to edit.")
+
+        with tabs[3]:
+            st.subheader("📋 All Employees List")
+            all_rows = []
+            for cid, name in get_all_employee_cids():
+                details = get_employee_details(cid)
+                if details:
+                    all_rows.append({
+                        "CID": cid,
+                        "Name": name,
+                        "Rank": details["rank"],
+                        "Hood": details["hood"]
+                    })
+            if all_rows:
+                df = pd.DataFrame(all_rows)
+                st.dataframe(df)
+            else:
+                st.info("No employees found.")
+
+    else:  # Tracking
+        st.header("📊 Tracking")
+        tabs = st.tabs([
+            "Employee","Customer","Hood","Membership",
+            "Employee Rankings","Custom Filter"
+        ])
+
+        # Employee tab
+        with tabs[0]:
+            st.subheader("Employee Billing")
+            ranks=["All"]+list(COMMISSION_RATES.keys())
+            sel_rank=st.selectbox("Filter by Rank", ranks)
+
+            all_emps=get_all_employee_cids()
+            if sel_rank!="All":
+                all_emps=[(cid,name) for cid,name in all_emps if get_employee_rank(cid)==sel_rank]
+            emp_keys=[f"{n} ({c})" for c,n in all_emps]
+            if not emp_keys:
+                st.info("No employees match that rank.")
+            else:
+                sel=st.selectbox("Select Employee", emp_keys)
+                view=st.radio("View",["Overall","Detailed"],horizontal=True)
+                cid=dict(zip(emp_keys,[c for c,_ in all_emps]))[sel]
+                if view=="Overall":
+                    summary,total=get_billing_summary_by_cid(cid)
+                    for k,v in summary.items():
+                        st.metric(k,f"₹{v:.2f}")
+                    st.metric("Total",f"₹{total:.2f}")
+                else:
+                    bills = get_employee_bills(cid)
+                    if bills:
+                        st.subheader("📋 Bill Entries")
+                        for bill in bills:
+                            bill_id, cust, btype, details, amt, ts, comm, tax = bill
+                            col1, col2 = st.columns([9, 1])
+                            with col1:
+                                st.markdown(
+                                    f"**ID:** `{bill_id}` | **Customer:** `{cust}` | **Type:** `{btype}`  \n"
+                                    f"**Details:** {details}  \n"
+                                    f"**Amount:** ₹{amt:.2f} | **Commission:** ₹{comm:.2f} | **Tax:** ₹{tax:.2f}  \n"
+                                    f"🕒 {ts}"
+                                )
+                            with col2:
+                                if st.button("🗑️", key=f"del_{bill_id}"):
+                                    conn = sqlite3.connect("auto_exotic_billing.db")
+                                    conn.execute("DELETE FROM bills WHERE id = ?", (bill_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success(f"Deleted bill ID {bill_id}")
+                                    st.experimental_rerun()
+                    else:
+                        st.info("No bills found for this employee.")
+
+        # Customer tab
+        with tabs[1]:
+            st.subheader("Customer Billing History")
+            customers = get_all_customers()
+            if customers:
+                cust=st.selectbox("Select Customer", customers)
+                df=pd.DataFrame(get_customer_bills(cust),
+                                columns=["Employee","Type","Details","Amount","Time","Commission","Tax"])
+                st.dataframe(df)
+            else:
+                st.info("No customer billing data yet.")
+
+        # Hood tab
+        with tabs[2]:
+            st.subheader("Hood Summary")
+            hood_names=[h[0] for h in get_all_hoods()]
+            if hood_names:
+                sel_hood=st.selectbox("Select Hood",hood_names)
+                rows=[]
+                for cid,name in get_employees_by_hood(sel_hood):
+                    _,tot=get_billing_summary_by_cid(cid)
+                    rows.append({"CID":cid,"Name":name,"Total":tot})
+                st.table(pd.DataFrame(rows))
+            else:
+                st.info("No hoods found.")
+
+        # Membership tab
+        with tabs[3]:
+            st.subheader("📋 Memberships")
+            view=st.radio("Show",["Active","Past"],horizontal=True)
+
+            if view=="Active":
+                rows=get_all_memberships()
+                data=[]
+                for cid,tier,dop_str in rows:
+                    dop=datetime.strptime(dop_str,"%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                    expiry=dop+timedelta(days=7)
+                    rem=expiry-datetime.now(IST)
+                    data.append({
+                        "Customer CID":cid,
+                        "Tier":tier,
+                        "Started On":dop.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Expires On":expiry.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Remaining":f"{rem.days}d {rem.seconds//3600}h"
+                    })
+                st.table(pd.DataFrame(data))
+
+                st.markdown("---")
+                st.subheader("🗑️ Delete a Membership")
+                mem_options = {f"{cid} ({tier})": cid for cid, tier, _ in rows}
+                if mem_options:
+                    sel_mem = st.selectbox("Select membership to delete", list(mem_options.keys()))
+                    if st.button("Delete Selected Membership"):
+                        cid_to_delete = mem_options[sel_mem]
+                        conn = sqlite3.connect("auto_exotic_billing.db")
+                        conn.execute("DELETE FROM memberships WHERE customer_cid = ?", (cid_to_delete,))
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Deleted membership for {cid_to_delete}.")
+                        st.experimental_rerun()
+                else:
+                    st.info("No active memberships found.")
+            else:
+                rows=get_past_memberships()
+                data=[]
+                for cid,tier,dop_str,expired_str in rows:
+                    data.append({
+                        "Customer CID":cid,
+                        "Tier":tier,
+                        "Started On":dop_str,
+                        "Expired At":expired_str
+                    })
+                st.table(pd.DataFrame(data))
+
+        # Employee Rankings tab
+        with tabs[4]:
+            st.subheader("🏆 Employee Rankings")
+            metric=st.selectbox("Select ranking metric",
+                                ["Total Sales","ITEMS","UPGRADES","REPAIR","CUSTOMIZATION","MEMBERSHIP"])
+            ranking=[]
+            conn=sqlite3.connect("auto_exotic_billing.db")
+            for cid,name in get_all_employee_cids():
+                if metric=="Total Sales":
+                    q="SELECT SUM(total_amount) FROM bills WHERE employee_cid=?"
+                    params=(cid,)
+                else:
+                    q=("SELECT SUM(total_amount) FROM bills "
+                       "WHERE employee_cid=? AND billing_type=?")
+                    params=(cid,metric)
+                val=conn.execute(q,params).fetchone()[0] or 0.0
+                ranking.append({"Employee":f"{name} ({cid})", metric:val})
+            conn.close()
+            df_rank=pd.DataFrame(ranking).sort_values(by=metric,ascending=False)
+            st.table(df_rank.head(100))
+
+        # Custom Filter tab
+        with tabs[5]:
+            st.subheader("🔍 Custom Sales Filter")
+            days=st.number_input("Last X days",min_value=1,max_value=30,value=7)
+            min_sales=st.number_input("Min sales amount (₹)",min_value=0.0,value=0.0)
+            if st.button("Apply Filter"):
+                cutoff=datetime.now(IST)-timedelta(days=days)
+                results=[]
+                conn=sqlite3.connect("auto_exotic_billing.db")
+                for cid,name in get_all_employee_cids():
+                    q=("SELECT SUM(total_amount) FROM bills "
+                       "WHERE employee_cid=? AND timestamp>=?")
+                    total=conn.execute(q,(cid,cutoff.strftime("%Y-%m-%d %H:%M:%S"))).fetchone()[0] or 0.0
+                    if total>=min_sales:
+                        results.append({"Employee":f"{name} ({cid})",
+                                        f"Sales in last {days}d":total})
+                conn.close()
+                if results:
+                    st.table(pd.DataFrame(results))
+                else:
+                    st.info("No employees match that filter.")
