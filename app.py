@@ -1404,7 +1404,6 @@ elif st.session_state.role == "admin":
         ed = st.date_input("To", value=now.date(), key="shift_ed")
         start_str = datetime(sd.year, sd.month, sd.day, 0, 0, 0, tzinfo=IST).strftime("%Y-%m-%d %H:%M:%S")
         end_str = datetime(ed.year, ed.month, ed.day, 23, 59, 59, tzinfo=IST).strftime("%Y-%m-%d %H:%M:%S")
-
         rows = get_shifts := None
         # inline simple reader to avoid confusion
         def _read_shifts(a, b):
