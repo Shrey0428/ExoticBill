@@ -581,17 +581,61 @@ def start_shift(employee_cid):
     return True, "Shift started."
 
 
+def start_shift(employee_cid):
+    if not (employee_cid and str(employee_cid).strip()):
+        return False, "Please enter your CID first."
+
+    conn = sqlite3.connect("auto_exotic_billing.db")
+    try:
+        _ensure_shifts_table(conn)
+        try:
+            active = conn.execute(
+                "SELECT id FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+                (employee_cid,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            # Table/index race on some hosts — ensure again and retry once
+            _ensure_shifts_table(conn)
+            active = conn.execute(
+                "SELECT id FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+                (employee_cid,)
+            ).fetchone()
+
+        if active:
+            return False, "Shift already active."
+
+        conn.execute(
+            "INSERT INTO shifts (employee_cid, start_ts) VALUES (?,?)",
+            (employee_cid, datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    audit("SHIFT_START", "shifts", "-", st.session_state.get("username","?"),
+          new_values={"employee_cid": employee_cid})
+    return True, "Shift started."
+
+
 def end_shift(employee_cid):
     if not (employee_cid and str(employee_cid).strip()):
         return False, "Please enter your CID first."
 
     conn = sqlite3.connect("auto_exotic_billing.db")
     try:
-        _ensure_shifts_table(conn)  # <-- make sure table exists
-        row = conn.execute(
-            "SELECT id, start_ts FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
-            (employee_cid,)
-        ).fetchone()
+        _ensure_shifts_table(conn)
+        try:
+            row = conn.execute(
+                "SELECT id, start_ts FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+                (employee_cid,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            _ensure_shifts_table(conn)
+            row = conn.execute(
+                "SELECT id, start_ts FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+                (employee_cid,)
+            ).fetchone()
+
         if not row:
             return False, "No active shift."
 
