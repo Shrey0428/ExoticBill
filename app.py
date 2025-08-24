@@ -533,63 +533,75 @@ def get_bill_logs(start_str=None, end_str=None):
     return rows
 
 # ---------- SHIFT HELPERS ----------
+def _ensure_shifts_table(conn):
+    conn.execute("""
+      CREATE TABLE IF NOT EXISTS shifts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_cid TEXT,
+        start_ts TEXT,
+        end_ts TEXT,
+        duration_minutes INTEGER,
+        bills_count INTEGER,
+        revenue REAL
+      )
+    """)
+
 def start_shift(employee_cid):
+    if not employee_cid:
+        return False, "Please enter your CID first."
     conn = sqlite3.connect("auto_exotic_billing.db")
-    # prevent duplicate active shift
-    active = conn.execute("SELECT id FROM shifts WHERE employee_cid=? AND end_ts IS NULL", (employee_cid,)).fetchone()
-    if active:
+    try:
+        _ensure_shifts_table(conn)
+        active = conn.execute(
+            "SELECT id FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+            (employee_cid,)
+        ).fetchone()
+        if active:
+            return False, "Shift already active."
+        conn.execute(
+            "INSERT INTO shifts (employee_cid, start_ts) VALUES (?,?)",
+            (employee_cid, datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        conn.commit()
+    finally:
         conn.close()
-        return False, "Shift already active."
-    conn.execute("INSERT INTO shifts (employee_cid, start_ts) VALUES (?,?)",
-                 (employee_cid, datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
     audit("SHIFT_START", "shifts", "-", st.session_state.get("username","?"),
           new_values={"employee_cid": employee_cid})
     return True, "Shift started."
 
 def end_shift(employee_cid):
+    if not employee_cid:
+        return False, "Please enter your CID first."
     conn = sqlite3.connect("auto_exotic_billing.db")
-    row = conn.execute(
-        "SELECT id, start_ts FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
-        (employee_cid,)
-    ).fetchone()
-    if not row:
+    try:
+        _ensure_shifts_table(conn)
+        row = conn.execute(
+            "SELECT id, start_ts FROM shifts WHERE employee_cid=? AND end_ts IS NULL",
+            (employee_cid,)
+        ).fetchone()
+        if not row:
+            return False, "No active shift."
+        sid, start_ts = row
+        now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+        bills = conn.execute("""
+            SELECT COUNT(*), COALESCE(SUM(total_amount),0)
+            FROM bills WHERE employee_cid=? AND timestamp>=? AND timestamp<=?
+        """, (employee_cid, start_ts, now)).fetchone()
+        bcount, revenue = (bills[0] or 0, bills[1] or 0.0)
+        dt_start = datetime.strptime(start_ts, "%Y-%m-%d %H:%M:%S")
+        dt_end = datetime.strptime(now, "%Y-%m-%d %H:%M:%S")
+        duration = int((dt_end - dt_start).total_seconds() // 60)
+        conn.execute("""
+            UPDATE shifts SET end_ts=?, duration_minutes=?, bills_count=?, revenue=?
+            WHERE id=?
+        """, (now, duration, bcount, revenue, sid))
+        conn.commit()
+    finally:
         conn.close()
-        return False, "No active shift."
-    sid, start_ts = row
-    # compute stats from bills between start_ts and now
-    now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-    bills = conn.execute("""
-        SELECT COUNT(*), COALESCE(SUM(total_amount),0)
-        FROM bills WHERE employee_cid=? AND timestamp>=? AND timestamp<=?
-    """, (employee_cid, start_ts, now)).fetchone()
-    bcount, revenue = (bills[0] or 0, bills[1] or 0.0)
-    # duration
-    dt_start = datetime.strptime(start_ts, "%Y-%m-%d %H:%M:%S")
-    dt_end = datetime.strptime(now, "%Y-%m-%d %H:%M:%S")
-    duration = int((dt_end - dt_start).total_seconds() // 60)
-    conn.execute("""
-        UPDATE shifts SET end_ts=?, duration_minutes=?, bills_count=?, revenue=?
-        WHERE id=?
-    """, (now, duration, bcount, revenue, sid))
-    conn.commit()
-    conn.close()
     audit("SHIFT_END", "shifts", sid, st.session_state.get("username","?"),
-          old_values={"start_ts": start_ts}, new_values={"end_ts": now, "bills": bcount, "revenue": revenue})
+          old_values={"start_ts": start_ts},
+          new_values={"end_ts": now, "bills": bcount, "revenue": revenue})
     return True, "Shift ended."
-
-def get_shifts(start_str=None, end_str=None):
-    conn = sqlite3.connect("auto_exotic_billing.db")
-    sql = "SELECT id, employee_cid, start_ts, end_ts, duration_minutes, bills_count, revenue FROM shifts"
-    params = ()
-    if start_str and end_str:
-        sql += " WHERE start_ts >= ? AND start_ts <= ?"
-        params = (start_str, end_str)
-    sql += " ORDER BY COALESCE(end_ts, start_ts) DESC"
-    rows = conn.execute(sql, params).fetchall()
-    conn.close()
-    return rows
 
 # ---------- AUTHENTICATION -----------
 def login(u, p):
