@@ -162,7 +162,6 @@ def save_bill(emp, cust, btype, det, amt):
                 item_names = [i.strip().split("×")[0] for i in det.split(",") if i.strip()]
             except Exception:
                 item_names = []
-        # If there are items and all are in the no-commission set:
         if item_names and all(name in no_commission_items for name in item_names):
             no_commission = True
 
@@ -265,7 +264,6 @@ def get_past_memberships():
 def get_billing_summary_by_cid(cid):
     conn = sqlite3.connect("auto_exotic_billing.db")
     summary = {}
-    # Include MEMBERSHIP so it rolls up into totals/rankings
     for bt in ["ITEMS","UPGRADES","REPAIR","CUSTOMIZATION","MEMBERSHIP"]:
         amt = conn.execute(
             "SELECT SUM(total_amount) FROM bills WHERE employee_cid=? AND billing_type=?",
@@ -367,6 +365,35 @@ def assign_employees_to_hood(hood, cids):
 def get_employees_by_hood(hood):
     conn = sqlite3.connect("auto_exotic_billing.db")
     rows = conn.execute("SELECT cid, name FROM employees WHERE hood=?", (hood,)).fetchall()
+    conn.close()
+    return rows
+
+# ---------- BILL LOGS HELPER ----------
+def get_bill_logs(start_str=None, end_str=None):
+    """
+    Returns bill logs joined with employee details.
+    If start_str and end_str are provided (YYYY-MM-DD HH:MM:SS),
+    results are filtered inclusively by timestamp.
+    """
+    conn = sqlite3.connect("auto_exotic_billing.db")
+    c = conn.cursor()
+    base_sql = """
+        SELECT
+            b.id, b.timestamp,
+            COALESCE(e.name, 'Unknown') AS emp_name,
+            b.employee_cid,
+            COALESCE(e.hood, 'No Hood') AS hood,
+            b.customer_cid, b.billing_type, b.details,
+            b.total_amount, b.commission, b.tax
+        FROM bills b
+        LEFT JOIN employees e ON e.cid = b.employee_cid
+    """
+    params = ()
+    if start_str and end_str:
+        base_sql += " WHERE b.timestamp >= ? AND b.timestamp <= ?"
+        params = (start_str, end_str)
+    base_sql += " ORDER BY b.timestamp DESC"
+    rows = c.execute(base_sql, params).fetchall()
     conn.close()
     return rows
 
@@ -492,8 +519,11 @@ elif st.session_state.role=="admin":
         conn.execute("DELETE FROM bills"); conn.commit(); conn.close()
         st.success("All billing records have been reset.")
 
-    menu=st.sidebar.selectbox("Main Menu",
-        ["Sales","Manage Hoods","Manage Staff","Tracking"], index=0)
+    menu=st.sidebar.selectbox(
+        "Main Menu",
+        ["Sales","Manage Hoods","Manage Staff","Tracking","Bill Logs"],  # added Bill Logs
+        index=0
+    )
 
     if menu=="Sales":
         st.header("💹 Sales Overview")
@@ -579,7 +609,7 @@ elif st.session_state.role=="admin":
                 if st.form_submit_button("Add Employee"):
                     if new_cid and new_name:
                         add_employee(new_cid,new_name,new_rank)
-                        if new_hood:  # typo guard
+                        if new_hood:
                             pass
                         if new_hood!="No Hood":
                             update_employee(new_cid,hood=new_hood)
@@ -640,7 +670,7 @@ elif st.session_state.role=="admin":
             else:
                 st.info("No employees found.")
 
-    else:  # Tracking
+    elif menu == "Tracking":
         st.header("📊 Tracking")
         tabs = st.tabs([
             "Employee","Customer","Hood","Membership",
@@ -689,7 +719,7 @@ elif st.session_state.role=="admin":
                                     conn.commit()
                                     conn.close()
                                     st.success(f"Deleted bill ID {bill_id}")
-                                    st.experimental_rerun()
+                                    st.rerun()
                     else:
                         st.info("No bills found for this employee.")
 
@@ -752,7 +782,7 @@ elif st.session_state.role=="admin":
                         conn.commit()
                         conn.close()
                         st.success(f"Deleted membership for {cid_to_delete}.")
-                        st.experimental_rerun()
+                        st.rerun()
                 else:
                     st.info("No active memberships found.")
             else:
@@ -809,3 +839,110 @@ elif st.session_state.role=="admin":
                     st.table(pd.DataFrame(results))
                 else:
                     st.info("No employees match that filter.")
+
+    elif menu == "Bill Logs":
+        st.header("🧾 Bill Logs")
+
+        # ---- Quick ranges & custom range controls ----
+        now = datetime.now(IST)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+
+        quick_range = st.selectbox(
+            "Quick Date Range",
+            ["Today", "Yesterday", "Last 2 days", "Last 7 days", "This Month", "Custom"]
+        )
+
+        start_dt, end_dt = None, None
+        if quick_range == "Today":
+            start_dt, end_dt = today_start, today_end
+        elif quick_range == "Yesterday":
+            y = today_start - timedelta(days=1)
+            start_dt, end_dt = y, y.replace(hour=23, minute=59, second=59)
+        elif quick_range == "Last 2 days":
+            start_dt, end_dt = (now - timedelta(days=2)), now
+        elif quick_range == "Last 7 days":
+            start_dt, end_dt = (now - timedelta(days=7)), now
+        elif quick_range == "This Month":
+            first_of_month = today_start.replace(day=1)
+            start_dt, end_dt = first_of_month, today_end
+        else:
+            # Custom range
+            st.markdown("### Custom Range")
+            colA, colB = st.columns(2)
+            with colA:
+                sd = st.date_input("Start date", value=today_start.date(), key="bill_logs_sd")
+            with colB:
+                ed = st.date_input("End date", value=today_end.date(), key="bill_logs_ed")
+
+            # Optional time refinements
+            colC, colD = st.columns(2)
+            with colC:
+                sh = st.number_input("Start hour", min_value=0, max_value=23, value=0, key="bill_logs_sh")
+            with colD:
+                eh = st.number_input("End hour", min_value=0, max_value=23, value=23, key="bill_logs_eh")
+
+            start_dt = datetime(sd.year, sd.month, sd.day, sh, 0, 0, tzinfo=IST)
+            end_dt = datetime(ed.year, ed.month, ed.day, eh, 59, 59, tzinfo=IST)
+
+        # Inclusive bounds as strings compatible with sqlite text comparison
+        start_str = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+        end_str = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Optional filters
+        st.markdown("### Filters")
+        col1, col2, col3 = st.columns([2, 2, 2])
+        with col1:
+            type_filter = st.multiselect(
+                "Billing Type",
+                ["ITEMS", "UPGRADES", "REPAIR", "CUSTOMIZATION", "MEMBERSHIP"],
+                default=[],
+                key="bill_logs_typefilter"
+            )
+        with col2:
+            emp_query = st.text_input("Employee (name or CID) contains", key="bill_logs_empq")
+        with col3:
+            cust_query = st.text_input("Customer CID contains", key="bill_logs_custq")
+
+        # Fetch
+        rows = get_bill_logs(start_str, end_str)
+
+        # Build dataframe and apply in-memory filtering
+        df = pd.DataFrame(rows, columns=[
+            "ID", "Time", "Employee Name", "Employee CID", "Hood",
+            "Customer CID", "Type", "Details", "Amount", "Commission", "Tax"
+        ])
+
+        # Apply filters
+        if type_filter:
+            df = df[df["Type"].isin(type_filter)]
+        if emp_query:
+            emp_query_low = emp_query.lower()
+            df = df[
+                df["Employee Name"].str.lower().str.contains(emp_query_low, na=False) |
+                df["Employee CID"].str.lower().str.contains(emp_query_low, na=False)
+            ]
+        if cust_query:
+            df = df[df["Customer CID"].str.lower().str.contains(cust_query.lower(), na=False)]
+
+        # Totals
+        total_amt = df["Amount"].sum() if not df.empty else 0.0
+        total_comm = df["Commission"].sum() if not df.empty else 0.0
+        total_tax = df["Tax"].sum() if not df.empty else 0.0
+
+        st.markdown(
+            f"**Showing {len(df):,} bill(s)** from **{start_str}** to **{end_str}**  \n"
+            f"**Total Amount:** ₹{total_amt:,.2f} | **Total Commission:** ₹{total_comm:,.2f} | **Total Tax:** ₹{total_tax:,.2f}"
+        )
+
+        st.dataframe(df, use_container_width=True)
+
+        # Download
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download CSV",
+            data=csv,
+            file_name=f"bill_logs_{start_str.replace(':','-')}_to_{end_str.replace(':','-')}.csv",
+            mime="text/csv",
+            key="bill_logs_dl"
+        )
