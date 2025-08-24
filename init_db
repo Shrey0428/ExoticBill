@@ -2,14 +2,14 @@ def init_db():
     conn = sqlite3.connect("auto_exotic_billing.db")
     c = conn.cursor()
 
-    # --- helpers ---
+    # ---------- helper ----------
     def has_column(table, col):
         info = c.execute(f"PRAGMA table_info({table})").fetchall()
-        names = {row[1] for row in info}  # row[1] is column name
-        return col in names
+        return any(row[1] == col for row in info)  # row[1] = column name
 
     # ========== CORE TABLES ==========
-    # bills
+
+    # bills (base)
     c.execute("""
       CREATE TABLE IF NOT EXISTS bills (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,13 +21,13 @@ def init_db():
         timestamp TEXT
       )
     """)
-    # Migrations for bills (older DBs might miss these)
+    # migrations for bills
     if not has_column("bills", "commission"):
         c.execute("ALTER TABLE bills ADD COLUMN commission REAL DEFAULT 0")
     if not has_column("bills", "tax"):
         c.execute("ALTER TABLE bills ADD COLUMN tax REAL DEFAULT 0")
 
-    # employees
+    # employees (base)
     c.execute("""
       CREATE TABLE IF NOT EXISTS employees (
         cid TEXT PRIMARY KEY,
@@ -35,12 +35,11 @@ def init_db():
         rank TEXT
       )
     """)
-    # Migrations for employees (older DBs might miss hood/rank default)
-    if not has_column("employees", "hood"):
-        c.execute("ALTER TABLE employees ADD COLUMN hood TEXT DEFAULT 'No Hood'")
-    # Ensure rank column exists (very old DBs)
+    # migrations for employees
     if not has_column("employees", "rank"):
         c.execute("ALTER TABLE employees ADD COLUMN rank TEXT DEFAULT 'Trainee'")
+    if not has_column("employees", "hood"):
+        c.execute("ALTER TABLE employees ADD COLUMN hood TEXT DEFAULT 'No Hood'")
 
     # memberships (active)
     c.execute("""
@@ -70,7 +69,8 @@ def init_db():
     """)
 
     # ========== NEW FEATURE TABLES (idempotent) ==========
-    # Soft-deletes for bills
+
+    # Soft delete store for bills
     c.execute("""
       CREATE TABLE IF NOT EXISTS bills_deleted (
         id INTEGER,
@@ -91,7 +91,7 @@ def init_db():
     c.execute("""
       CREATE TABLE IF NOT EXISTS audit_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        action TEXT,           -- e.g., 'DELETE_BILL','UPDATE_EMP','SHIFT_START','SHIFT_END'
+        action TEXT,           -- e.g. DELETE_BILL, UPDATE_EMP, SHIFT_START, SHIFT_END
         table_name TEXT,
         row_id TEXT,
         actor TEXT,
@@ -122,7 +122,7 @@ def init_db():
       )
     """)
 
-    # ========== INDEXES (safe, IF NOT EXISTS) ==========
+    # ========== INDEXES (safe) ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_bills_ts ON bills(timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bills_emp_ts ON bills(employee_cid, timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bills_cust_ts ON bills(customer_cid, timestamp)")
