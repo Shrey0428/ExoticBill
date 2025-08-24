@@ -1164,8 +1164,7 @@ elif st.session_state.role=="admin":
             start_dt, end_dt = today_start, today_end
         elif quick_range == "Yesterday":
             y = today_start - timedelta(days=1)
-            start_dt, end_dt = y, y.replace(hour=23, minute=59, second:=
-59)
+            start_dt, end_dt = y, y.replace(hour=23, minute=59, second:=59)
         elif quick_range == "Last 2 days":
             start_dt, end_dt = (now - timedelta(days=2)), now
         elif quick_range == "Last 7 days":
