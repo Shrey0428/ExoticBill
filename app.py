@@ -1397,6 +1397,7 @@ elif st.session_state.role == "admin":
             st.info(f"{lookup} has **{pts}** loyalty points.")
 
     # Shifts
+        # Shifts
     elif menu == "Shifts":
         st.header("⏱️ Shifts")
         now = datetime.now(IST)
@@ -1404,8 +1405,8 @@ elif st.session_state.role == "admin":
         ed = st.date_input("To", value=now.date(), key="shift_ed")
         start_str = datetime(sd.year, sd.month, sd.day, 0, 0, 0, tzinfo=IST).strftime("%Y-%m-%d %H:%M:%S")
         end_str = datetime(ed.year, ed.month, ed.day, 23, 59, 59, tzinfo=IST).strftime("%Y-%m-%d %H:%M:%S")
-        rows = get_shifts := None
-        # inline simple reader to avoid confusion
+
+        # Read shifts within range
         def _read_shifts(a, b):
             conn = sqlite3.connect("auto_exotic_billing.db")
             sql = ("SELECT id, employee_cid, start_ts, end_ts, duration_minutes, bills_count, revenue "
