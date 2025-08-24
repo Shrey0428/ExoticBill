@@ -534,6 +534,7 @@ def get_bill_logs(start_str=None, end_str=None):
 
 # ---------- SHIFT HELPERS ----------
 def _ensure_shifts_table(conn):
+    # Create the shifts table (idempotent)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS shifts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -545,11 +546,14 @@ def _ensure_shifts_table(conn):
             revenue REAL
         )
     """)
+    # Create index in a version-agnostic way
     try:
+        # Old SQLite builds may not support IF NOT EXISTS on CREATE INDEX reliably
         conn.execute("CREATE INDEX idx_shifts_emp_active ON shifts(employee_cid, end_ts)")
     except sqlite3.OperationalError:
-        # Index already exists (or older SQLite message) – safe to ignore
+        # Index already exists or not supported variant — safe to ignore
         pass
+        
 def start_shift(employee_cid):
     if not (employee_cid and str(employee_cid).strip()):
         return False, "Please enter your CID first."
