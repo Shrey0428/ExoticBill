@@ -1446,36 +1446,120 @@ elif st.session_state.role == "admin":
 
     # Shifts
         # Shifts
+        # Shifts
     elif menu == "Shifts":
         st.header("⏱️ Shifts")
-        now = datetime.now(IST)
-        sd = st.date_input("From", value=(now - timedelta(days=7)).date(), key="shift_sd")
-        ed = st.date_input("To", value=now.date(), key="shift_ed")
-        start_str = datetime(sd.year, sd.month, sd.day, 0, 0, 0, tzinfo=IST).strftime("%Y-%m-%d %H:%M:%S")
-        end_str = datetime(ed.year, ed.month, ed.day, 23, 59, 59, tzinfo=IST).strftime("%Y-%m-%d %H:%M:%S")
 
-        # Read shifts within range
-        def _read_shifts(a, b):
+        # tabs: by-employee vs live
+        tab_emp, tab_live = st.tabs(["By Employee", "Live Shifts"])
+
+        # ---------- BY EMPLOYEE ----------
+        with tab_emp:
+            # employee selector (name + CID)
+            all_emp = get_all_employee_cids()  # [(cid, name), ...]
+            if not all_emp:
+                st.info("No employees found.")
+            else:
+                labels = [f"{name} ({cid})" for cid, name in all_emp]
+                cid_map = {f"{name} ({cid})": cid for cid, name in all_emp}
+                sel_label = st.selectbox("Select Employee", labels, key="shift_emp_picker")
+                sel_cid = cid_map[sel_label]
+
+                # date range for this employee
+                now = datetime.now(IST)
+                colA, colB = st.columns(2)
+                with colA:
+                    sd = st.date_input("From", value=(now - timedelta(days=7)).date(), key="shift_emp_sd")
+                with colB:
+                    ed = st.date_input("To", value=now.date(), key="shift_emp_ed")
+
+                start_str = datetime(sd.year, sd.month, sd.day, 0, 0, 0, tzinfo=IST).strftime("%Y-%m-%d %H:%M:%S")
+                end_str = datetime(ed.year, ed.month, ed.day, 23, 59, 59, tzinfo=IST).strftime("%Y-%m-%d %H:%M:%S")
+
+                # query only that employee's shifts, sorted (latest first)
+                conn = sqlite3.connect("auto_exotic_billing.db")
+                rows = conn.execute(
+                    """
+                    SELECT s.id,
+                           s.employee_cid,
+                           COALESCE(e.name, 'Unknown') AS employee_name,
+                           s.start_ts, s.end_ts,
+                           s.duration_minutes, s.bills_count, s.revenue
+                    FROM shifts s
+                    LEFT JOIN employees e ON e.cid = s.employee_cid
+                    WHERE s.employee_cid = ?
+                      AND s.start_ts >= ?
+                      AND s.start_ts <= ?
+                    ORDER BY COALESCE(s.end_ts, s.start_ts) DESC
+                    """,
+                    (sel_cid, start_str, end_str)
+                ).fetchall()
+                conn.close()
+
+                df = pd.DataFrame(
+                    rows,
+                    columns=[
+                        "ID", "Employee CID", "Employee Name", "Start", "End",
+                        "Duration (min)", "Bills", "Revenue"
+                    ]
+                )
+
+                # quick summary
+                if not df.empty:
+                    total_shifts = len(df)
+                    total_minutes = int(df["Duration (min)"].fillna(0).sum())
+                    total_bills = int(df["Bills"].fillna(0).sum())
+                    total_rev = float(df["Revenue"].fillna(0).sum())
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Shifts", f"{total_shifts}")
+                    col2.metric("Minutes", f"{total_minutes:,}")
+                    col3.metric("Bills", f"{total_bills:,}")
+                    col4.metric("Revenue", f"₹{total_rev:,.2f}")
+
+                st.dataframe(df, use_container_width=True)
+
+        # ---------- LIVE SHIFTS ----------
+        with tab_live:
+            st.subheader("Active (Live) Shifts")
+            auto = st.toggle("Auto-refresh every 60s", value=False, key="shifts_live_auto")
+
+            # show all active shifts with names and elapsed time
             conn = sqlite3.connect("auto_exotic_billing.db")
-            sql = ("SELECT id, employee_cid, start_ts, end_ts, duration_minutes, bills_count, revenue "
-                   "FROM shifts WHERE start_ts >= ? AND start_ts <= ? "
-                   "ORDER BY COALESCE(end_ts, start_ts) DESC")
-            data = conn.execute(sql, (a, b)).fetchall()
+            live = conn.execute(
+                """
+                SELECT s.employee_cid, COALESCE(e.name, 'Unknown') AS employee_name, s.start_ts
+                FROM shifts s
+                LEFT JOIN employees e ON e.cid = s.employee_cid
+                WHERE s.end_ts IS NULL
+                ORDER BY s.start_ts ASC
+                """
+            ).fetchall()
             conn.close()
-            return data
 
-        rows = _read_shifts(start_str, end_str)
-        df = pd.DataFrame(rows, columns=["ID", "Employee CID", "Start", "End", "Duration (min)", "Bills", "Revenue"])
-        st.dataframe(df, use_container_width=True)
+            if live:
+                # compute elapsed per shift
+                data = []
+                now_ist = datetime.now(IST)
+                for cid, name, start_ts in live:
+                    try:
+                        dt_start = datetime.strptime(start_ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                    except Exception:
+                        dt_start = now_ist
+                    elapsed_min = int((now_ist - dt_start).total_seconds() // 60)
+                    data.append({
+                        "Employee Name": name,
+                        "Employee CID": cid,
+                        "Start Time": start_ts,
+                        "Elapsed (min)": elapsed_min
+                    })
+                st.table(pd.DataFrame(data).sort_values("Elapsed (min)", ascending=False))
+            else:
+                st.info("No active shifts.")
 
-        st.subheader("Active Shifts")
-        conn = sqlite3.connect("auto_exotic_billing.db")
-        act = conn.execute("SELECT employee_cid, start_ts FROM shifts WHERE end_ts IS NULL").fetchall()
-        conn.close()
-        if act:
-            st.table(pd.DataFrame(act, columns=["Employee CID", "Start Time"]))
-        else:
-            st.info("No active shifts.")
+            if auto:
+                import time
+                time.sleep(60)
+                st.rerun()
 
     # Audit
     elif menu == "Audit":
