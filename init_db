@@ -121,6 +121,25 @@ def init_db():
         points INTEGER DEFAULT 0
       )
     """)
+    try:
+    # One active (end_ts IS NULL) shift per employee_cid
+    c.executescript("""
+    CREATE TRIGGER shifts_enforce_single_active
+    BEFORE INSERT ON shifts
+    WHEN NEW.end_ts IS NULL
+    BEGIN
+      SELECT
+        CASE
+          WHEN EXISTS (
+            SELECT 1 FROM shifts
+            WHERE employee_cid = NEW.employee_cid AND end_ts IS NULL
+          )
+          THEN RAISE(ABORT, 'Active shift already exists for this employee')
+        END;
+    END;
+    """)
+except sqlite3.OperationalError:
+    pass
 
     # ========== INDEXES (safe) ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_bills_ts ON bills(timestamp)")
